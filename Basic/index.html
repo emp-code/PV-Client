@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta name="postvault.spk" content="">
+		<meta name="postvault.domain" content="">
+
+		<meta name="author" content="EMPcode">
+		<meta name="description" content="Private online file storage">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+
+		<title>PostVault</title>
+
+		<style>
+			html {
+				background: black;
+				color: white;
+			}
+			
+			time {
+				font-family: monospace;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div>
+			<h1>PostVault</h1>
+			<p><input type="password" maxlength="64" pattern="[0-9a-f]{64}" required autocomplete="current-password" autofocus></p>
+			<p><button>Enter</button></p>
+		</div>
+
+		<div hidden>Loading...</div>
+
+		<div hidden>
+			<ul></ul>
+
+			<p><button id="btn_dl">Download</button></p>
+
+			<p><button id="btn_upl">Upload</button></p>
+
+			<p><button id="btn_ind">Index</button></p>
+		</div>
+
+		<script src="https://cdn.jsdelivr.net/gh/jedisct1/libsodium.js@0.7.10/dist/browsers/sodium.js" integrity="sha384-GEJ3DUwTjXaoqVwjTaPCJN0gtk+mbUoJ7/QO/6IKrlO+P7QHrV9497Vy5q+JNp7j" crossorigin="anonymous"></script>
+		<script src="PostVault.js"></script>
+		<script src="main.js"></script>
+	</body>
+</html>

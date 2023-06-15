@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="Content-Security-Policy" content="script-src 'sha256-HxVXgGacMOeUuctvn+8BxGlt7nWhxiw2JxXlzepgoIw=' 'unsafe-eval' https://cdn.jsdelivr.net/gh/jedisct1/libsodium.js@0.7.10/dist/browsers/sodium.js; style-src 'sha256-eHbv0C79pfxb6CpwQ/jarTIT2igrfptPpJraHx5zfsM='; base-uri 'none'; child-src 'none'; connect-src 'none'; default-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; manifest-src 'none'; media-src 'none'; object-src 'none'; prefetch-src 'none'; worker-src 'none';">
+		<meta name="referrer" content="no-referrer">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+
+		<style>
+			body, input {
+				text-align: center;
+			}
+
+			input {
+				font-family: monospace, monospace;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				body, input, button {
+					background: #000;
+					color: #aaa;
+				}
+			}
+		</style>
+
+		<title>Key generator for PostVault</title>
+	</head>
+	<body>
+		<p>
+			<button type="button" autofocus>Generate keys</button>
+		</p>
+
+		<p>
+			User Master Key (UMK):<br>
+			<input type="text" readonly="readonly" size="64" id="mkey">
+		</p>
+
+		<p>
+			User Registration Key (URK):<br>
+			<input type="text" readonly="readonly" size="64" id="rkey">
+		</p>
+
+		<script src="https://cdn.jsdelivr.net/gh/jedisct1/libsodium.js@0.7.10/dist/browsers/sodium.js" integrity="sha384-GEJ3DUwTjXaoqVwjTaPCJN0gtk+mbUoJ7/QO/6IKrlO+P7QHrV9497Vy5q+JNp7j" crossorigin="anonymous"></script>
+
+		<script>
+			sodium.ready.then(function() {
+				document.getElementsByTagName("button")[0].onclick = function() {
+					const new_umk = sodium.crypto_kdf_keygen();
+					const new_urk = sodium.crypto_kdf_derive_from_key(36, 1, "PVu-URK0", new_umk);
+
+					document.getElementById("mkey").value = sodium.to_hex(new_umk);
+					document.getElementById("rkey").value = sodium.to_hex(new_urk);
+				}
+			});
+		</script>
+	</body>
+</html>
