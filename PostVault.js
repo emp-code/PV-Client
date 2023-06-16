@@ -299,6 +299,8 @@ function PostVault(readyCallback) {
 			totalChunks++;
 		}
 
+		if (totalChunks > 255) {endCallback("Error: File too large"); return;}
+
 		const binTs = _getBinTs();
 		const totalBlocks = lenTotal / _PV_BLOCKSIZE;
 		const fileBaseKey = _getFileBaseKey(slot, binTs, totalBlocks);
