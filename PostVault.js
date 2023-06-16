@@ -222,6 +222,8 @@ function PostVault(readyCallback) {
 			}
 		});
 
+		if (!wantFiles && wantFolders) list.sort();
+
 		return list;
 	}
 
