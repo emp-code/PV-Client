@@ -220,8 +220,7 @@ function PostVault(readyCallback) {
 	};
 
 	const _uploadChunks = async function(file, slot, binTs, totalBlocks, lenPadding, offset, totalChunks, chunk, progressCallback, endCallback) {
-		progressCallback(chunk);
-
+		progressCallback("Reading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
 		const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - sodium.crypto_aead_chacha20poly1305_ABYTES);
 		const contentsAb = await contents.arrayBuffer();
 
@@ -231,16 +230,18 @@ function PostVault(readyCallback) {
 			aead_src.set(new Uint8Array(contentsAb));
 		} else aead_src = new Uint8Array(contentsAb);
 
+		progressCallback("Encrypting chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 0.5, totalChunks * 2);
 		const fileBaseKey = _getFileBaseKey(slot, binTs, totalBlocks);
 		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, chunk));
 
 		offset += _PV_CHUNKSIZE - sodium.crypto_aead_chacha20poly1305_ABYTES;
 
+		progressCallback("Uploading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 		_fetchEncrypted(slot, chunk, null, aead_enc, _getMfk(fileBaseKey, chunk), false, function(status) {
 			if (typeof(status) === "number") {
-				endCallback(status);
+				endCallback("Error: " + status);
 			} else if (chunk + 1 === totalChunks) {
-				endCallback(0);
+				endCallback("Done");
 			} else {
 				_uploadChunks(file, slot, binTs, totalBlocks, lenPadding, offset, totalChunks, chunk + 1, progressCallback, endCallback);
 			}
@@ -276,16 +277,18 @@ function PostVault(readyCallback) {
 		aead_src.set(sodium.from_string(file.name), 2);
 		aead_src.set(new Uint8Array(contentsAb), 2 + file.name.length);
 
+		progressCallback("Encrypting chunk 1 of " + totalChunks, 0, totalChunks * 2);
 		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
 
+		progressCallback("Uploading chunk 1 of " + totalChunks, 0, totalChunks * 2);
 		_fetchEncrypted(slot, 0, binTs, aead_enc, _getMfk(fileBaseKey, 0), true, function(status) {
 			if (typeof(status) === "number") {
-				endCallback(status);
+				endCallback("Error: " + status);
 			} else {
 				_files[slot] = new _pvFile(file.name, Math.round(file.lastModified / 1000), totalBlocks);
 
 				if (totalChunks === 1) {
-					endCallback(0);
+					endCallback("Done");
 				} else {
 					_uploadChunks(file, slot, binTs, totalBlocks, lenPadding, contents.size, totalChunks, 1, progressCallback, endCallback);
 				}
@@ -294,22 +297,25 @@ function PostVault(readyCallback) {
 	};
 
 	const downloadChunks = function(slot, chunk, totalChunks, lenPadding, writer, progressCallback, endCallback) {
-		progressCallback(chunk);
+		progressCallback("Downloading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
 
 		_fetchEncrypted(slot, chunk, null, null, null, null, function(resp) {
-			if (typeof(resp) === "number") {writer.close(); endCallback(resp); return;}
+			if (typeof(resp) === "number") {writer.close(); endCallback("Fail: " + resp); return;}
 
 			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const fileBaseKey = _getFileBaseKey(slot, binTs, totalBlocks);
 
+			progressCallback("Decrypting (AES) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, chunk), async function(dec) {
+				progressCallback("Decrypting (ChaCha20) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.333, totalChunks * 2);
 				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, chunk));
 
+				progressCallback("Writing chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.667, totalChunks * 2);
 				if (chunk + 1 === totalChunks) {
 					writer.write(dec.slice(0, dec.length - lenPadding));
 					writer.close();
-					endCallback();
+					endCallback("Done");
 					return;
 				}
 
@@ -320,32 +326,37 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.downloadFile = function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
+	this.downloadFile = async function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
 		const totalChunks = Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
 
 		if (!window.showSaveFilePicker && totalChunks > 1) {
-			console.log("Not supported");
-			endCallback(255);
+			endCallback("Your broswer lacks support for downloading large files");
 			return;
 		}
 
+		let fileName = (_files[slot]) ? _files[slot].fn : "Unknown";
+		const fileHandle = (totalChunks > 1) ? await window.showSaveFilePicker({suggestedName: fileName}) : null;
+		progressCallback("Downloading chunk 1 of " + totalChunks , 0, totalChunks * 2);
+
 		_fetchEncrypted(slot, 0, null, null, null, null, function(resp) {
-			if (typeof(resp) === "number") {endCallback(resp); return;}
+			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
 			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const fileBaseKey = _getFileBaseKey(slot, binTs, totalBlocks);
 
+			progressCallback("Decrypting (AES) chunk 1 of " + totalChunks, 1, totalChunks * 2);
 			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, 0), async function(dec) {
+				progressCallback("Decrypting (ChaCha20) chunk 1 of " + totalChunks, 1.333, totalChunks * 2);
 				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
+				progressCallback("Writing chunk 1 of " + totalChunks, 1.667, totalChunks * 2);
 
-				const fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
+				fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
 				const lenPadding = dec[0];
 				dec = dec.slice(2 + dec[1]);
 
-				if (window.showSaveFilePicker) {
-					const handle = await window.showSaveFilePicker({suggestedName: fileName});
-					const writer = await handle.createWritable();
+				if (fileHandle) {
+					const writer = await fileHandle.createWritable();
 
 					if (totalChunks > 1) {
 						writer.write(dec);
@@ -353,7 +364,7 @@ function PostVault(readyCallback) {
 					} else {
 						writer.write(dec.slice(0, dec.length - lenPadding));
 						writer.close();
-						endCallback(0);
+						endCallback("Done");
 					}
 				} else {
 					const a = document.createElement("a");
@@ -364,6 +375,7 @@ function PostVault(readyCallback) {
 					URL.revokeObjectURL(a.href);
 					a.href = "";
 					a.download = "";
+					endCallback("Done");
 				}
 			});
 		});

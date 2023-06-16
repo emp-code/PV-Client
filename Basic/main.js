@@ -28,11 +28,15 @@ function displayFiles() {
 			elSpan.textContent = vault.getFileName(i) + " (" + Math.round(vault.getFileSize(i) / 1024) + " KiB) ";
 			elSpan.onclick = function() {
 				vault.downloadFile(i,
-					function(status) {
-						console.log("Prog=" + status);
+					function(statusText, currentProgress, maxProgress) {
+						document.getElementById("progress_text").textContent = statusText;
+						document.getElementById("progress_meter").value = currentProgress;
+						document.getElementById("progress_meter").max = maxProgress;
 					},
-					function(status) {
-						console.log("Final=" + status);
+					function(statusText) {
+						document.getElementById("progress_text").textContent = statusText;
+						document.getElementById("progress_meter").value = 1;
+						document.getElementById("progress_meter").max = 1;
 					},
 				);
 			};
@@ -84,13 +88,19 @@ document.getElementById("btn_upl").onclick = function() {
 		btn.disabled = true;
 
 		vault.uploadFile(file,
-			function(status) {
-				console.log("Chunk #" + status);
+			function(statusText, currentProgress, maxProgress) {
+				document.getElementById("progress_text").textContent = statusText;
+				document.getElementById("progress_meter").value = currentProgress;
+				document.getElementById("progress_meter").max = maxProgress;
 			},
-			function(status) {
+			function(statusText) {
+				document.getElementById("progress_text").textContent = statusText;
+				document.getElementById("progress_meter").value = 1;
+				document.getElementById("progress_meter").max = 1;
+
 				displayFiles();
 				btn.disabled = false;
-			}
+			},
 		);
 	};
 };
