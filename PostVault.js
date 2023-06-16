@@ -19,8 +19,8 @@ function PostVault(readyCallback) {
 
 	const _PV_SPK = sodium.from_hex(_PV_DOCSPK);
 
-	function _pvFile(fn, ts, blocks) {
-		this.fn = fn;
+	function _pvFile(path, ts, blocks) {
+		this.path = path;
 		this.ts = ts;
 		this.blocks = blocks;
 	};
@@ -113,7 +113,7 @@ function PostVault(readyCallback) {
 	const _genIndex = function() {
 		let lenIndex = 2;
 		for (let i = 0; i < 4096; i++) {
-			lenIndex += (_files[i] && _files[i].blocks > 0) ? (9 + sodium.from_string(_files[i].fn).length) : 1;
+			lenIndex += (_files[i] && _files[i].blocks > 0) ? (9 + sodium.from_string(_files[i].path).length) : 1;
 		}
 
 		let lenPadding = (lenIndex % 16 === 0) ? 0 : 16 - (lenIndex % 16);
@@ -127,14 +127,14 @@ function PostVault(readyCallback) {
 
 		for (let i = 0; i < 4096; i++) {
 			if (_files[i] && _files[i].blocks > 0) {
-				const fn = sodium.from_string(_files[i].fn);
+				const path = sodium.from_string(_files[i].path);
 
 				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].ts]).buffer), n);
 				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].blocks]).buffer), n + 4);
-				pvInfo.set(new Uint8Array([fn.length]), n + 8);
-				pvInfo.set(fn, n + 9);
+				pvInfo.set(new Uint8Array([path.length]), n + 8);
+				pvInfo.set(path, n + 9);
 
-				n += 9 + fn.length;
+				n += 9 + path.length;
 			} else {
 				pvInfo[n] = 0;
 				n++;
@@ -196,15 +196,40 @@ function PostVault(readyCallback) {
 		let count = 0;
 
 		for (let i = 0; i < 256; i++) {
-			if (_files[i].fn) count++;
+			if (_files[i].path) count++;
 		}
 
 		return count;
 	};
 
-	this.getFileName = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].fn : null;};
+	this.getFolderContents = function(basePath, wantFiles, wantFolders) {if(typeof(basePath)!=="string") return;
+		if (basePath !== "" && !basePath.endsWith("/")) basePath += "/";
+		if (basePath.startsWith("/")) basePath = basePath.substr(1);
+
+		let list = [];
+
+		_files.forEach(function(f, i) {
+			if (i === 0) return;
+
+			if (f.path.startsWith(basePath)) {
+				const slash = f.path.substr(basePath.length).indexOf("/");
+				if (wantFiles && slash === -1) {
+					list.push(i);
+				} else if (wantFolders && slash >= 0) {
+					const fol = f.path.substr(basePath.length).substr(0, slash);
+					if (list.indexOf(fol) === -1) list.push(fol);
+				}
+			}
+		});
+
+		return list;
+	}
+
+	this.getFilePath = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].path : null;};
 	this.getFileSize = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].blocks * _PV_BLOCKSIZE : null;};
 	this.getFileTime = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].ts : null;};
+
+	this.moveFile = function(num, newPath) {if(typeof(num)!=="number" || typeof(newPath)!=="string" || newPath.length<1 || !_files[num]) return false; _files[num].path = newPath; return true;};
 
 	this.uploadIndex = function(callback) {if(typeof(callback)!=="function"){return;}
 		const aead_src = _genIndex();
@@ -248,7 +273,10 @@ function PostVault(readyCallback) {
 		});
 	}
 
-	this.uploadFile = async function(file, progressCallback, endCallback) {if(typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
+	this.uploadFile = async function(folderPath, file, progressCallback, endCallback) {if(typeof(folderPath)!=="string" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
+		if (folderPath.startsWith("/")) folderPath = folderPath.substr(1);
+		if (folderPath !== "" && !folderPath.endsWith("/")) folderPath += "/";
+
 		const slot = _getFreeSlot();
 		if (slot < 0) {endCallback(-1); return;}
 
@@ -285,7 +313,7 @@ function PostVault(readyCallback) {
 			if (typeof(status) === "number") {
 				endCallback("Error: " + status);
 			} else {
-				_files[slot] = new _pvFile(file.name, Math.round(file.lastModified / 1000), totalBlocks);
+				_files[slot] = new _pvFile(folderPath + file.name, Math.round(file.lastModified / 1000), totalBlocks);
 
 				if (totalChunks === 1) {
 					endCallback("Done");
