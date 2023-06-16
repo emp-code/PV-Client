@@ -308,9 +308,10 @@ function PostVault(readyCallback) {
 
 		const aead_src_len = ((totalChunks > 1) ? _PV_CHUNKSIZE : lenTotal) - sodium.crypto_aead_chacha20poly1305_ABYTES;
 		const aead_src = new Uint8Array(aead_src_len);
-		aead_src.set(new Uint8Array([lenPadding, file.name.length]));
-		aead_src.set(sodium.from_string(file.name), 2);
-		aead_src.set(new Uint8Array(contentsAb), 2 + file.name.length);
+		const filename = sodium.from_string(file.name);
+		aead_src.set(new Uint8Array([lenPadding, filename.length]));
+		aead_src.set(filename, 2);
+		aead_src.set(new Uint8Array(contentsAb), 2 + filename.length);
 
 		progressCallback("Encrypting chunk 1 of " + totalChunks, 0, totalChunks * 2);
 		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
@@ -369,7 +370,7 @@ function PostVault(readyCallback) {
 			return;
 		}
 
-		let fileName = (_files[slot]) ? _files[slot].fn : "Unknown";
+		let fileName = (_files[slot]) ? _files[slot].path : "Unknown";
 		const fileHandle = (totalChunks > 1) ? await window.showSaveFilePicker({suggestedName: fileName}) : null;
 		progressCallback("Downloading chunk 1 of " + totalChunks , 0, totalChunks * 2);
 
