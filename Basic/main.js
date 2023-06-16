@@ -35,7 +35,7 @@ function displayFiles(basePath) {
 		const elLi = document.createElement("li");
 		elLi.textContent = "📁 ..";
 		elLi.onclick = function() {
-			displayFiles("");
+			displayFiles(currentPath.substr(0, currentPath.lastIndexOf("/")));
 		}
 
 		document.getElementsByTagName("ul")[0].append(elLi);
