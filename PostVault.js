@@ -229,6 +229,13 @@ function PostVault(readyCallback) {
 	this.getFileSize = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].blocks * _PV_BLOCKSIZE : null;};
 	this.getFileTime = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].ts : null;};
 
+	this.getTotalFiles = function() {return _files.length;};
+	this.getTotalSize = function() {
+		let b = 0;
+		_files.forEach(function(f) {b += f.blocks * _PV_BLOCKSIZE;});
+		return b;
+	}
+
 	this.moveFile = function(num, newPath) {if(typeof(num)!=="number" || typeof(newPath)!=="string" || newPath.length<1 || !_files[num]) return false; _files[num].path = newPath; return true;};
 
 	this.uploadIndex = function(callback) {if(typeof(callback)!=="function"){return;}

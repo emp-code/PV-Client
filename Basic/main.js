@@ -10,6 +10,18 @@ const vault = new PostVault(function(ok) {
 
 let currentPath = "";
 
+function getDisplaySize(bytes) {
+	if (bytes > 1073741824) {
+		return (bytes / 1073741824).toFixed(1) + " GiB";
+	} else if (bytes > 1048576) {
+		return Math.round(bytes / 1048576) + " MiB";
+	} else if (bytes > 1024) {
+		return Math.round(bytes / 1024) + " KiB";
+	} else {
+		return bytes + " B";
+	}
+}
+
 function displayFiles(basePath) {
 	currentPath = basePath;
 
@@ -49,7 +61,8 @@ function displayFiles(basePath) {
 		elLi.append(elTime);
 
 		const elSpan = document.createElement("span");
-		elSpan.textContent = vault.getFilePath(f).substr(basePath.length) + " (" + Math.round(vault.getFileSize(f) / 1024) + " KiB) ";
+
+		elSpan.textContent = vault.getFilePath(f).substr(basePath.length) + " (" + getDisplaySize(vault.getFileSize(f)) + ") ";
 		elSpan.onclick = function() {
 			vault.downloadFile(f,
 				function(statusText, currentProgress, maxProgress) {
@@ -94,6 +107,9 @@ function displayFiles(basePath) {
 
 		document.getElementsByTagName("ul")[0].append(elLi);
 	});
+
+	document.getElementById("totalfiles").textContent = vault.getTotalFiles();
+	document.getElementById("totalsize").textContent = getDisplaySize(vault.getTotalSize());
 }
 
 document.getElementById("btn_ind").onclick = function() {
