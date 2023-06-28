@@ -9,7 +9,7 @@ function PostVault(readyCallback) {
 	const _PV_FLAG_U3 = 16384;
 	const _PV_FLAG_U4 = 32768;
 
-	const _PV_DOMAIN = document.head.querySelector("meta[name='postvault.domain']").content;
+	const _PV_APIURL = document.head.querySelector("meta[name='postvault.url']").content;
 	const _PV_DOCSPK = document.head.querySelector("meta[name='postvault.spk']").content;
 
 //	if (!_PV_DOMAIN || !new RegExp(/^[0-9a-z.-]{1,63}\.[0-9a-z-]{2,63}$/).test(_PV_DOMAIN) || !_PV_DOCSPK || !new RegExp("^[0-9A-f]{" + (sodium.crypto_box_PUBLICKEYBYTES * 2).toString() + "}$").test(_PV_DOCSPK)) {
@@ -44,7 +44,7 @@ function PostVault(readyCallback) {
 	}
 
 	const _fetchBinary = async function(urlBase, postData, callback) {
-		const r = await fetch("http://" + _PV_DOMAIN + ":1307/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
+		const r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
 			method: postData? "POST" : "GET",
 			cache: "no-store",
 			credentials: "omit",
