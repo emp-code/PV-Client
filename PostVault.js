@@ -72,8 +72,13 @@ function PostVault(readyCallback) {
 		aes_nonce.set(binTs? binTs : _getBinTs());
 
 		const aes_src = new Uint8Array(34);
+		if (mfk) {
+			aes_src.set(mfk, 2);
+		} else {
+			if (typeof(content) === "string" && content === "DELETE") aes_src.fill(0xDE);
+			else aes_src.fill(0xBE);
+		}
 		aes_src.set(new Uint8Array(new Uint16Array([slot | (flagReplace? _PV_FLAG_REPLACE : 0)]).buffer));
-		if (mfk) aes_src.set(mfk, 2);
 
 		const aes_enc = new Uint8Array(await window.crypto.subtle.encrypt({name: "AES-GCM", iv: aes_nonce}, await window.crypto.subtle.importKey("raw", _own_uak, {"name": "AES-GCM"}, false, ["encrypt"]), aes_src));
 
