@@ -68,6 +68,8 @@ function PostVault(readyCallback) {
 			return;
 		}
 
+		await new Promise(resolve => setTimeout(resolve, 1)); // Ensure requests are never made within the same millisecond
+
 		const aes_nonce = new Uint8Array(12); // 96 bits
 		aes_nonce.set(binTs? binTs : _getBinTs());
 
