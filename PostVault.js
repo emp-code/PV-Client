@@ -63,7 +63,7 @@ function PostVault(readyCallback) {
 	};
 
 	const _fetchEncrypted = async function(slot, chunk, binTs, content, mfk, flagReplace, callback) {
-		if ((slot && (typeof(slot) !== "number" || slot < 0 || slot > 255)) || (content && ((typeof(content) !== "object" && content !== "DELETE") || content.length > _PV_UPLOAD_SIZE_MAX))) {
+		if ((slot && (typeof(slot) !== "number" || slot < 0 || slot > 4095)) || (content && ((typeof(content) !== "object" && content !== "DELETE") || content.length > _PV_UPLOAD_SIZE_MAX))) {
 			callback(0x04);
 			return;
 		}
@@ -152,7 +152,7 @@ function PostVault(readyCallback) {
 	};
 
 	const _getFreeSlot = function() {
-		for (let i = 1; i < 256; i++) {
+		for (let i = 1; i < 4096; i++) {
 			if (!_files[i]) return i;
 		}
 
@@ -202,7 +202,7 @@ function PostVault(readyCallback) {
 	this.getFileCount = function() {
 		let count = 0;
 
-		for (let i = 0; i < 256; i++) {
+		for (let i = 0; i < 4096; i++) {
 			if (_files[i].path) count++;
 		}
 
