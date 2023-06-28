@@ -341,7 +341,7 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.fixFile = async function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
+	this.fixFile = async function(slot, basePath, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
 		progressCallback("Downloading first chunk", 0, 1);
 
 		_fetchEncrypted(slot, 0, null, null, null, null, function(resp) {
@@ -358,7 +358,7 @@ function PostVault(readyCallback) {
 				progressCallback("Decrypting (ChaCha20) first chunk", 0.75, 1);
 				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
 
-				_files[slot].path = sodium.to_string(dec.slice(2, 2 + dec[1]));
+				_files[slot].path = basePath + "/" + sodium.to_string(dec.slice(2, 2 + dec[1]));
 				endCallback("Fixed");
 			});
 		});

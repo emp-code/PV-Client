@@ -109,7 +109,7 @@ function displayFiles(basePath) {
 		const fxBtn = document.createElement("button");
 		fxBtn.textContent = "Fix";
 		fxBtn.onclick = function() {
-			vault.fixFile(f,
+			vault.fixFile(f, currentPath,
 				function(statusText, currentProgress, maxProgress) {
 					document.getElementById("progress_text").textContent = statusText;
 					document.getElementById("progress_meter").value = currentProgress;
