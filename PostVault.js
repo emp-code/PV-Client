@@ -372,7 +372,7 @@ function PostVault(readyCallback) {
 	};
 
 	this.downloadFile = async function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
-		const totalChunks = Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+		let totalChunks = Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
 
 		if (!window.showSaveFilePicker && totalChunks > 1) {
 			endCallback("Your broswer lacks support for downloading large files");
@@ -389,6 +389,7 @@ function PostVault(readyCallback) {
 			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const fileBaseKey = _getFileBaseKey(slot, binTs, totalBlocks);
+			totalChunks = (totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE
 
 			progressCallback("Decrypting (AES) chunk 1 of " + totalChunks, 1, totalChunks * 2);
 			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, 0), async function(dec) {
