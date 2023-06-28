@@ -167,7 +167,7 @@ document.getElementsByTagName("button")[0].onclick = function() {
 		document.getElementsByTagName("div")[0].hidden = true;
 		document.getElementsByTagName("div")[1].hidden = false;
 
-		vault.downloadIndex(function() {displayFiles("")});
+		vault.downloadIndex(function() {displayFiles("");});
 	});
 };
 
