@@ -23,6 +23,7 @@ function getDisplaySize(bytes) {
 }
 
 function displayFiles(basePath) {
+	if (basePath.startsWith("/")) basePath = basePath.substr(1);
 	currentPath = basePath;
 
 	document.getElementsByTagName("div")[0].hidden = true;
@@ -62,7 +63,7 @@ function displayFiles(basePath) {
 
 		const elSpan = document.createElement("span");
 
-		elSpan.textContent = vault.getFilePath(f).substr(basePath.length) + " (" + getDisplaySize(vault.getFileSize(f)) + ") ";
+		elSpan.textContent = vault.getFilePath(f).substr(basePath.length + 1) + " (" + getDisplaySize(vault.getFileSize(f)) + ") ";
 		elSpan.onclick = function() {
 			vault.downloadFile(f,
 				function(statusText, currentProgress, maxProgress) {
