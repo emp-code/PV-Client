@@ -74,7 +74,7 @@ function displayFiles(basePath) {
 					document.getElementById("progress_text").textContent = statusText;
 					document.getElementById("progress_meter").value = 1;
 					document.getElementById("progress_meter").max = 1;
-				},
+				}
 			);
 		};
 		elLi.append(elSpan);
@@ -121,32 +121,40 @@ document.getElementById("btn_ind").onclick = function() {
 	});
 }
 
+function uploadFile(files, cur) {
+	vault.uploadFile(currentPath, files[cur],
+		function(statusText, currentProgress, maxProgress) {
+			document.getElementById("progress_text").textContent = statusText;
+			document.getElementById("progress_meter").value = currentProgress;
+			document.getElementById("progress_meter").max = maxProgress;
+		},
+		function(statusText) {
+			displayFiles(currentPath);
+
+			if (cur + 1 < files.length) {
+				uploadFile(files, cur + 1);
+			} else {
+				document.getElementById("progress_text").textContent = statusText;
+				document.getElementById("progress_meter").value = 1;
+				document.getElementById("progress_meter").max = 1;
+
+				document.getElementById("btn_upl").disabled = false;
+			}
+		},
+	);
+}
+
 document.getElementById("btn_upl").onclick = function() {
 	const btn = this;
 
 	const fileSelector = document.createElement("input");
 	fileSelector.type = "file";
+	fileSelector.multiple = "multiple";
 	fileSelector.click();
 
 	fileSelector.onchange = function() {
-		const file = fileSelector.files[0];
 		btn.disabled = true;
-
-		vault.uploadFile(currentPath, file,
-			function(statusText, currentProgress, maxProgress) {
-				document.getElementById("progress_text").textContent = statusText;
-				document.getElementById("progress_meter").value = currentProgress;
-				document.getElementById("progress_meter").max = maxProgress;
-			},
-			function(statusText) {
-				document.getElementById("progress_text").textContent = statusText;
-				document.getElementById("progress_meter").value = 1;
-				document.getElementById("progress_meter").max = 1;
-
-				displayFiles(currentPath);
-				btn.disabled = false;
-			}
-		);
+		uploadFile(fileSelector.files, 0);
 	};
 };
 
