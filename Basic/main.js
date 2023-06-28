@@ -105,6 +105,25 @@ function displayFiles(basePath) {
 		};
 		elLi.append(mvBtn);
 
+		const fxBtn = document.createElement("button");
+		fxBtn.textContent = "Fix";
+		fxBtn.onclick = function() {
+			vault.fixFile(f,
+				function(statusText, currentProgress, maxProgress) {
+					document.getElementById("progress_text").textContent = statusText;
+					document.getElementById("progress_meter").value = currentProgress;
+					document.getElementById("progress_meter").max = maxProgress;
+				},
+				function(statusText) {
+					document.getElementById("progress_text").textContent = statusText;
+					document.getElementById("progress_meter").value = 1;
+					document.getElementById("progress_meter").max = 1;
+					displayFiles(currentPath);
+				}
+			);
+		}
+		elLi.append(fxBtn);
+
 		document.getElementsByTagName("ul")[0].append(elLi);
 	});
 
