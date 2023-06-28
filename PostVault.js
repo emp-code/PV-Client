@@ -59,7 +59,7 @@ function PostVault(readyCallback) {
 			body: (typeof(postData) === "object") ? postData : null
 		});
 
-		callback((r.statusText === "PV") ? new Uint8Array(await r.arrayBuffer()) : null);
+		callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : null);
 	};
 
 	const _fetchEncrypted = async function(slot, chunk, binTs, content, mfk, flagReplace, callback) {
