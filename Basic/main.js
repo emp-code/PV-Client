@@ -145,7 +145,7 @@ document.getElementById("btn_upl").onclick = function() {
 
 				displayFiles(currentPath);
 				btn.disabled = false;
-			},
+			}
 		);
 	};
 };
