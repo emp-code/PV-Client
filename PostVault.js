@@ -444,7 +444,11 @@ function PostVault(readyCallback) {
 
 					const fileTime = new Uint32Array(dec.slice(n, n + 4).buffer)[0];
 					const fileBlocks = new Uint32Array(dec.slice(n + 4, n + 8).buffer)[0];
-					const fileName = sodium.to_string(dec.slice(n + 9, n + 9 + dec[n + 8]));
+					
+					let fileName;
+					try {fileName = sodium.to_string(dec.slice(n + 9, n + 9 + dec[n + 8]));}
+					catch(e) {fileName = "Error: " + e;}
+					
 					_files[i] = new _pvFile(fileName, fileTime, fileBlocks);
 					n += 9 + dec[n + 8];
 				}
