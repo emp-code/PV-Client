@@ -281,8 +281,8 @@ function PostVault(readyCallback) {
 	}
 
 	this.uploadFile = async function(folderPath, file, progressCallback, endCallback) {if(typeof(folderPath)!=="string" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
-		if (folderPath.startsWith("/")) folderPath = folderPath.substr(1);
-		if (folderPath !== "" && !folderPath.endsWith("/")) folderPath += "/";
+		if (folderPath && folderPath.startsWith("/")) folderPath = folderPath.substr(1);
+		if (folderPath && !folderPath.endsWith("/")) folderPath += "/";
 
 		const slot = _getFreeSlot();
 		if (slot < 0) {endCallback(-1); return;}
@@ -334,7 +334,10 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.fixFile = async function(slot, basePath, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
+	this.fixFile = async function(slot, folderPath, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(folderPath)!=="string" || typeof(endCallback)!=="function"){return;}
+		if (folderPath && folderPath.startsWith("/")) folderPath = folderPath.substr(1);
+		if (folderPath && !folderPath.endsWith("/")) folderPath += "/";
+
 		progressCallback("Downloading first chunk", 0, 1);
 
 		_fetchEncrypted(slot, 0, null, null, null, null, function(resp) {
@@ -351,7 +354,7 @@ function PostVault(readyCallback) {
 				progressCallback("Decrypting (ChaCha20) first chunk", 0.75, 1);
 				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
 
-				_files[slot].path = basePath + "/" + sodium.to_string(dec.slice(2, 2 + dec[1]));
+				_files[slot].path = folderPath + sodium.to_string(dec.slice(2, 2 + dec[1]));
 				endCallback("Fixed");
 			});
 		});
