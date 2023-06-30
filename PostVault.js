@@ -63,7 +63,7 @@ function PostVault(readyCallback) {
 	};
 
 	const _fetchEncrypted = async function(slot, chunk, binTs, content, mfk, flagReplace, callback) {
-		if ((slot && (typeof(slot) !== "number" || slot < 0 || slot > 4095)) || (content && ((typeof(content) !== "object" && content !== "DELETE") || content.length > _PV_UPLOAD_SIZE_MAX))) {
+		if (typeof(slot) !== "number" || slot < 0 || slot > 65535 || (content && ((typeof(content) !== "object" && content !== "DELETE") || content.length > _PV_UPLOAD_SIZE_MAX))) {
 			callback(0x04);
 			return;
 		}
@@ -119,7 +119,7 @@ function PostVault(readyCallback) {
 
 	const _genIndex = function() {
 		let lenIndex = 2;
-		for (let i = 0; i < 4096; i++) {
+		for (let i = 0; i < 65536; i++) {
 			lenIndex += (_files[i] && _files[i].blocks > 0) ? (9 + sodium.from_string(_files[i].path).length) : 1;
 		}
 
@@ -132,7 +132,7 @@ function PostVault(readyCallback) {
 
 		let n = 2;
 
-		for (let i = 0; i < 4096; i++) {
+		for (let i = 0; i < 65536; i++) {
 			if (_files[i] && _files[i].blocks > 0) {
 				const path = sodium.from_string(_files[i].path);
 
@@ -152,7 +152,7 @@ function PostVault(readyCallback) {
 	};
 
 	const _getFreeSlot = function() {
-		for (let i = 1; i < 4096; i++) {
+		for (let i = 1; i < 65536; i++) {
 			if (!_files[i]) return i;
 		}
 
@@ -193,7 +193,7 @@ function PostVault(readyCallback) {
 	this.getFileCount = function() {
 		let count = 0;
 
-		for (let i = 0; i < 4096; i++) {
+		for (let i = 0; i < 65536; i++) {
 			if (_files[i].path) count++;
 		}
 
