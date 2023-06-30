@@ -73,22 +73,22 @@ function PostVault(readyCallback) {
 		const aes_nonce = new Uint8Array(12); // 96 bits
 		aes_nonce.set(binTs? binTs : _getBinTs());
 
-		const aes_src = new Uint8Array(34);
+		const aes_src = new Uint8Array(35);
 		if (mfk) {
-			aes_src.set(mfk, 2);
+			aes_src.set(mfk, 3);
 		} else {
 			if (typeof(content) === "string" && content === "DELETE") aes_src.fill(0xDE);
 			else aes_src.fill(0xBE);
 		}
-		aes_src.set(new Uint8Array(new Uint16Array([slot | (flagReplace? _PV_FLAG_REPLACE : 0)]).buffer));
+		aes_src.set(new Uint8Array(new Uint16Array([slot]).buffer));
+		aes_src[2] = (flagReplace) ? 1 : 0;
 
 		const aes_enc = new Uint8Array(await window.crypto.subtle.encrypt({name: "AES-GCM", iv: aes_nonce}, await window.crypto.subtle.importKey("raw", _own_uak, {"name": "AES-GCM"}, false, ["encrypt"]), aes_src));
 
-		const box_src = new Uint8Array(_own_uid.length + 6 + aes_enc.length);
-		box_src.set(_own_uid);
-		box_src.set(aes_nonce.slice(0, 5), _own_uid.length);
-		box_src[_own_uid.length + 5] = chunk;
-		box_src.set(aes_enc, _own_uid.length + 6);
+		const box_src = new Uint8Array(9 + aes_enc.length);
+		box_src.set(aes_nonce.slice(0, 5));
+		box_src.set(new Uint8Array(new Uint32Array([_own_uid | (chunk << 12)]).buffer), 5);
+		box_src.set(aes_enc, 9);
 
 		const box_keys = sodium.crypto_box_keypair();
 		const box_nonce = new Uint8Array(sodium.crypto_box_NONCEBYTES);
@@ -503,10 +503,8 @@ function PostVault(readyCallback) {
 		}
 
 		_own_umk = sodium.from_hex(umk_hex);
-
-		const urk = sodium.crypto_kdf_derive_from_key(36, 1, "PVu-URK0", _own_umk);
-		_own_uak = urk.slice(0, 32);
-		_own_uid = urk.slice(32);
+		_own_uak = sodium.crypto_kdf_derive_from_key(32, 1, "PVt-Uak0", _own_umk);
+		_own_uid = new Uint16Array(sodium.crypto_aead_chacha20poly1305_encrypt("UserID", null, null, new Uint8Array([0,0,0,0,0,0,0,0]), _own_uak).slice(0, 2).buffer)[0] & 4095;
 
 		callback(true);
 	};
