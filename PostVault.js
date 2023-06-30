@@ -177,19 +177,10 @@ function PostVault(readyCallback) {
 	}
 
 	const _getFileBaseKey = function(slot, binTs, blocks) {
-		const bytes = new Uint8Array([
-			binTs[0],
-			binTs[1],
-			binTs[2],
-			binTs[3],
-			binTs[4],
-			(slot) & 255,
-			((slot >> 8) & 15) | ((blocks & 15) << 4),
-			(blocks >> 4) & 255,
-			(blocks >> 12) & 255,
-			(blocks >> 20) & 255
-		]);
-
+		const bytes = new Uint8Array(11);
+		bytes.set(binTs);
+		bytes.set(new Uint8Array(new Uint16Array([slot]).buffer), 5);
+		bytes.set(new Uint8Array(new Uint32Array([blocks]).buffer), 7);
 		return sodium.crypto_generichash(sodium.crypto_kdf_KEYBYTES, bytes, _own_umk);
 	}
 
