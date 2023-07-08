@@ -1,19 +1,17 @@
 "use strict";
 
 function PostVault(readyCallback) {
+	const crypto_aead_aes256gcm_ABYTES = 16;
 	const _PV_CHUNKSIZE = 16777216;
 	const _PV_BLOCKSIZE = 16;
+
+	const _PV_FLAG_SHARED = 1;
 	const _PV_FLAG_KEEPOLD = 2;
 
 	const _PV_CMD_DOWNLOAD = 0;
 	const _PV_CMD_UPLOAD =  64;
 	const _PV_CMD_DELETE = 128;
 //	const _PV_CMD_       = 192;
-
-	const _PV_CLIENT_REQUEST_DOWNLOAD = 0;
-	const _PV_CLIENT_REQUEST_UPLOAD_NEW = 1;
-	const _PV_CLIENT_REQUEST_UPLOAD_OLD = 2;
-	const _PV_CLIENT_REQUEST_DELETE = 3;
 
 	const _PV_APIURL = document.head.querySelector("meta[name='postvault.url']").content;
 	const _PV_DOCSPK = document.head.querySelector("meta[name='postvault.spk']").content;
@@ -25,9 +23,10 @@ function PostVault(readyCallback) {
 
 	const _PV_SPK = sodium.from_hex(_PV_DOCSPK);
 
-	function _pvFile(path, ts, blocks) {
+	function _pvFile(path, lastMod, binTs, blocks) {
 		this.path = path;
-		this.ts = ts;
+		this.lastMod = lastMod;
+		this.binTs = binTs;
 		this.blocks = blocks;
 	};
 
@@ -35,7 +34,11 @@ function PostVault(readyCallback) {
 	let _own_uak;
 	let _own_uid;
 
-	let _files = [new _pvFile("", 0, 0)];
+	let _files = [new _pvFile("", 0, null, 0)];
+
+	let _share_chunk1 = null;
+	let _share_blocks = null;
+	let _share_filename = null;
 
 	const _getBinTs = function() {
 		const ts = BigInt(Date.now());
@@ -52,7 +55,6 @@ function PostVault(readyCallback) {
 	const _fetchBinary = async function(urlBase, postData, callback) {
 		const r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
 			method: postData? "POST" : "GET",
-			cache: "no-store",
 			credentials: "omit",
 			headers: new Headers({
 				"Accept": "",
@@ -68,28 +70,23 @@ function PostVault(readyCallback) {
 		callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : null);
 	};
 
-	const _fetchEncrypted = async function(requestType, slot, chunk, binTs, content, mfk, callback) {
-		if ((typeof(requestType) !== "number" || requestType < 0 || requestType > 3 || typeof(slot) !== "number" || slot < 0 || slot > 65535 || typeof(chunk) !== "number" || chunk < 0 || chunk > 4095) ||
-			((requestType === _PV_CLIENT_REQUEST_UPLOAD_NEW || requestType === _PV_CLIENT_REQUEST_UPLOAD_OLD) && (typeof(content) !== "object" || content.length < 1 || typeof(mfk) !== "object" || mfk.length !== 32)))
-		{callback(0x01); return;}
-
-		await new Promise(resolve => setTimeout(resolve, 1)); // Ensure requests are never made within the same millisecond
-
+	const _fe_aes_enc = async function(flags, slot, binTs) {
 		const aes_nonce = new Uint8Array(12); // 96 bits
-		aes_nonce.set(binTs? binTs : _getBinTs());
+		aes_nonce.set(binTs);
 
 		const aes_src = new Uint8Array(3);
 		aes_src.set(new Uint8Array(new Uint16Array([slot]).buffer));
-		aes_src[2] = (requestType === _PV_CLIENT_REQUEST_UPLOAD_OLD) ? _PV_FLAG_KEEPOLD : 0;
-		if (requestType === _PV_CLIENT_REQUEST_DOWNLOAD) aes_src[2] |= _PV_CMD_DOWNLOAD;
-		else if (requestType === _PV_CLIENT_REQUEST_DELETE) aes_src[2] |= _PV_CMD_DELETE;
-		else aes_src[2] |= _PV_CMD_UPLOAD;
+		aes_src[2] = flags;
 
-		const aes_enc = new Uint8Array(await window.crypto.subtle.encrypt({name: "AES-GCM", iv: aes_nonce}, await window.crypto.subtle.importKey("raw", _own_uak, {"name": "AES-GCM"}, false, ["encrypt"]), aes_src));
+		return new Uint8Array(await window.crypto.subtle.encrypt({name: "AES-GCM", iv: aes_nonce}, await window.crypto.subtle.importKey("raw", _own_uak, {"name": "AES-GCM"}, false, ["encrypt"]), aes_src));
+	};
+
+	const _fetchEncrypted = async function(aes_enc, binTs, uid, chunk, content, mfk, callback) {
+		await new Promise(resolve => setTimeout(resolve, 1)); // Ensure requests are never made within the same millisecond
 
 		const box_src = new Uint8Array(8 + aes_enc.length);
-		box_src.set(aes_nonce.slice(0, 5));
-		box_src.set(new Uint8Array(new Uint32Array([_own_uid | (chunk << 12)]).buffer).slice(0, 3), 5);
+		box_src.set(binTs);
+		box_src.set(new Uint8Array(new Uint32Array([uid | (chunk << 12)]).buffer).slice(0, 3), 5);
 		box_src.set(aes_enc, 8);
 
 		const box_keys = sodium.crypto_box_keypair();
@@ -118,7 +115,7 @@ function PostVault(readyCallback) {
 
 			let dec;
 			try {dec = sodium.crypto_box_open_easy(result_box, box_nonce, _PV_SPK, box_keys.privateKey);}
-			catch(e) {callback(null); console.log("f"); return;}
+			catch(e) {callback(null); return;}
 
 			// TODO: 5 bytes: LastMod
 
@@ -128,8 +125,8 @@ function PostVault(readyCallback) {
 
 	const _genIndex = function() {
 		let lenIndex = 2;
-		for (let i = 0; i < 65536; i++) {
-			lenIndex += (_files[i] && _files[i].blocks > 0) ? (9 + sodium.from_string(_files[i].path).length) : 1;
+		for (let i = 0; i < 65535; i++) {
+			lenIndex += (_files[i] && _files[i].blocks > 0) ? (14 + sodium.from_string(_files[i].path).length) : 1;
 		}
 
 		let lenPadding = (lenIndex % 16 === 0) ? 0 : 16 - (lenIndex % 16);
@@ -141,16 +138,17 @@ function PostVault(readyCallback) {
 
 		let n = 2;
 
-		for (let i = 0; i < 65536; i++) {
+		for (let i = 0; i < 65535; i++) {
 			if (_files[i] && _files[i].blocks > 0) {
 				const path = sodium.from_string(_files[i].path);
 
-				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].ts]).buffer), n);
-				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].blocks]).buffer), n + 4);
-				pvInfo.set(new Uint8Array([path.length]), n + 8);
-				pvInfo.set(path, n + 9);
+				pvInfo[n] = path.length;
+				pvInfo.set(_files[i].binTs, n + 1);
+				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].lastMod]).buffer), n + 6);
+				pvInfo.set(new Uint8Array(new Uint32Array([_files[i].blocks]).buffer), n + 10);
+				pvInfo.set(path, n + 14);
 
-				n += 9 + path.length;
+				n += 14 + path.length;
 			} else {
 				pvInfo[n] = 0;
 				n++;
@@ -197,17 +195,94 @@ function PostVault(readyCallback) {
 		return sodium.crypto_generichash(len, _PV_SPK, null);
 	}
 
-	// Public functions
+	const _getFileType = function(filename) {
+		if (!filename) return null;
 
-	this.getFileCount = function() {
-		let count = 0;
+		const ext = filename.lastIndexOf(".");
+		if (ext < 0) return null;
 
-		for (let i = 0; i < 65536; i++) {
-			if (_files[i].path) count++;
+		switch (filename.substr(ext + 1).toLowerCase()) {
+			case "bat":
+			case "c":
+			case "c++":
+			case "cc":
+			case "cpp":
+			case "css":
+			case "csv":
+			case "cxx":
+			case "eml":
+			case "h":
+			case "h++":
+			case "hh":
+			case "hpp":
+			case "hxx":
+			case "ini":
+			case "java":
+			case "js":
+			case "json":
+			case "log":
+			case "lua":
+			case "md":
+			case "php":
+			case "py":
+			case "rb":
+			case "rs":
+			case "sh":
+			case "txt":
+			case "vbs":
+			case "xml":
+			case "yaml":
+			case "yml":
+				return "text";
+
+			// For non-text formats, only formats supported by browsers are sensible
+			case "apng":
+			case "avif":
+			case "bmp":
+			case "gif":
+			case "ico":
+			case "jpeg":
+			case "jpg":
+			case "png":
+			case "webp":
+				return "image";
+
+			case "aac":
+			case "flac":
+			case "m4a":
+			case "m4b":
+			case "mp3":
+			case "oga":
+			case "ogg":
+			case "opus":
+			case "wav":
+				return "audio";
+
+			case "avi":
+			case "m4v":
+			case "mkv":
+			case "mov":
+			case "mp4":
+			case "ogv":
+			case "ogx":
+			case "webm":
+				return "video";
+
+			case "pdf":
+				return "pdf";
+
+			case "html":
+			case "htm":
+				return "html";
+
+			case "svg":
+				return "svg";
 		}
 
-		return count;
+		return null;
 	};
+
+	// Public functions
 
 	this.getFolderContents = function(basePath, wantFiles, wantFolders) {if(typeof(basePath)!=="string") return;
 		if (basePath !== "" && !basePath.endsWith("/")) basePath += "/";
@@ -236,26 +311,25 @@ function PostVault(readyCallback) {
 
 	this.getFilePath = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].path : null;};
 	this.getFileSize = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].blocks * _PV_BLOCKSIZE : null;};
-	this.getFileTime = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].ts : null;};
+	this.getFileTime = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].lastMod : null;};
 
 	this.getTotalFiles = function() {return _files.length;};
 	this.getTotalSize = function() {
 		let b = 0;
-		_files.forEach(function(f) {b += f.blocks * _PV_BLOCKSIZE;});
-		return b;
+		_files.forEach(function(f) {b += f.blocks;});
+		return b * _PV_BLOCKSIZE;
 	}
 
 	this.moveFile = function(num, newPath) {if(typeof(num)!=="number" || typeof(newPath)!=="string" || newPath.length<1 || !_files[num]) return false; _files[num].path = newPath; return true;};
 
-	this.uploadIndex = function(callback) {if(typeof(callback)!=="function"){return;}
-		const aead_src = _genIndex();
+	this.uploadIndex = async function(callback) {if(typeof(callback)!=="function"){return;}
+		const index_src = _genIndex();
 		const binTs = _getBinTs();
-		const totalBlocks = (aead_src.length + sodium.crypto_aead_chacha20poly1305_ABYTES) / _PV_BLOCKSIZE;
-		const fileBaseKey = _getFileBaseKey(0, totalBlocks, binTs);
+		const totalBlocks = (index_src.length + sodium.crypto_aead_chacha20poly1305_ABYTES) / _PV_BLOCKSIZE;
+		const fbk = _getFileBaseKey(0, totalBlocks, binTs);
+		const index_enc = sodium.crypto_aead_chacha20poly1305_encrypt(index_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fbk, 0));
 
-		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
-
-		_fetchEncrypted(_PV_CLIENT_REQUEST_UPLOAD_NEW, 0, 0, binTs, aead_enc, _getMfk(fileBaseKey, 0), function(status) {
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD, 0, binTs), binTs, _own_uid, 0, index_enc, _getMfk(fbk, 0), function(status) {
 			callback(typeof(status) === "number" ? status : status[0]);
 		});
 	};
@@ -278,7 +352,9 @@ function PostVault(readyCallback) {
 		offset += _PV_CHUNKSIZE - sodium.crypto_aead_chacha20poly1305_ABYTES;
 
 		progressCallback("Uploading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
-		_fetchEncrypted(_PV_CLIENT_REQUEST_UPLOAD_OLD, slot, chunk, null, aead_enc, _getMfk(fileBaseKey, chunk), function(status) {
+
+		const bts = _getBinTs();
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, slot, bts), bts, _own_uid, chunk, aead_enc, _getMfk(fileBaseKey, chunk), function(status) {
 			if (typeof(status) === "number") {
 				endCallback("Error: " + status);
 			} else if (chunk + 1 === totalChunks) {
@@ -292,11 +368,14 @@ function PostVault(readyCallback) {
 	this.uploadFile = async function(folderPath, file, progressCallback, endCallback) {if(typeof(folderPath)!=="string" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
 		if (folderPath && folderPath.startsWith("/")) folderPath = folderPath.substr(1);
 		if (folderPath && !folderPath.endsWith("/")) folderPath += "/";
+		if (sodium.from_string(folderPath + file.name).length > 255) return;
 
 		const slot = _getFreeSlot();
 		if (slot < 0) {endCallback(-1); return;}
 
-		let lenTotal = 2 + file.name.length + file.size;
+		const filename = sodium.from_string(file.name);
+
+		let lenTotal = 2 + filename.length + file.size;
 		let lenPadding = (lenTotal % 16 === 0) ? 0 : 16 - (lenTotal & 15);
 		lenTotal += lenPadding;
 
@@ -314,12 +393,11 @@ function PostVault(readyCallback) {
 		const totalBlocks = lenTotal / _PV_BLOCKSIZE;
 		const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
 
-		const contents = await file.slice(0, _PV_CHUNKSIZE - 2 - file.name.length - sodium.crypto_aead_chacha20poly1305_ABYTES);
+		const contents = await file.slice(0, _PV_CHUNKSIZE - 2 - filename.length - sodium.crypto_aead_chacha20poly1305_ABYTES);
 		const contentsAb = await contents.arrayBuffer();
 
 		const aead_src_len = ((totalChunks > 1) ? _PV_CHUNKSIZE : lenTotal) - sodium.crypto_aead_chacha20poly1305_ABYTES;
 		const aead_src = new Uint8Array(aead_src_len);
-		const filename = sodium.from_string(file.name);
 		aead_src.set(new Uint8Array([lenPadding, filename.length]));
 		aead_src.set(filename, 2);
 		aead_src.set(new Uint8Array(contentsAb), 2 + filename.length);
@@ -328,11 +406,12 @@ function PostVault(readyCallback) {
 		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
 
 		progressCallback("Uploading chunk 1 of " + totalChunks, 0, totalChunks * 2);
-		_fetchEncrypted(_PV_CLIENT_REQUEST_UPLOAD_NEW, slot, 0, binTs, aead_enc, _getMfk(fileBaseKey, 0), function(status) {
+
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD, slot, binTs), binTs, _own_uid, 0, aead_enc, _getMfk(fileBaseKey, 0), function(status) {
 			if (typeof(status) === "number") {
 				endCallback("Error: " + status);
 			} else {
-				_files[slot] = new _pvFile(folderPath + file.name, Math.round(file.lastModified / 1000), totalBlocks);
+				_files[slot] = new _pvFile(folderPath + file.name, Math.round(file.lastModified / 1000), binTs, totalBlocks);
 
 				if (totalChunks === 1) {
 					endCallback("Done");
@@ -349,12 +428,12 @@ function PostVault(readyCallback) {
 
 		progressCallback("Downloading first chunk", 0, 1);
 
-		_fetchEncrypted(_PV_CLIENT_REQUEST_DOWNLOAD, slot, 0, null, null, null, function(resp) {
+		const binTs = _getBinTs();
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, _own_uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
-			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
+			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
 			const totalChunks = (totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE
 			_files[slot].blocks = totalBlocks;
 
@@ -369,15 +448,15 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	const downloadChunks = function(slot, chunk, totalChunks, lenPadding, writer, progressCallback, endCallback) {
+	const _downloadChunks = async function(slot, chunk, totalChunks, lenPadding, writer, progressCallback, endCallback) {
 		progressCallback("Downloading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
 
-		_fetchEncrypted(_PV_CLIENT_REQUEST_DOWNLOAD, slot, chunk, null, null, null, function(resp) {
+		const binTs = _getBinTs();
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, _own_uid, chunk, null, null, function(resp) {
 			if (typeof(resp) === "number") {writer.close(); endCallback("Fail: " + resp); return;}
 
-			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
+			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
 
 			progressCallback("Decrypting (AES) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, chunk), async function(dec) {
@@ -399,47 +478,51 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.downloadFile = async function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
-		let totalChunks = Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+	const _downloadFile = async function(uid, fbk, slot, aes_enc, binTs, progressCallback, doneCallback) {
+		progressCallback("Downloading chunk 1 of " + (slot? Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE) : "?"), 0, 1);
 
-		if (!window.showSaveFilePicker && totalChunks > 1) {
-			endCallback("Your broswer lacks support for downloading large files");
-			return;
-		}
-
-		let fileName = (_files[slot]) ? _files[slot].path : "Unknown";
-		const fileHandle = (totalChunks > 1) ? await window.showSaveFilePicker({suggestedName: fileName}) : null;
-		progressCallback("Downloading chunk 1 of " + totalChunks , 0, totalChunks * 2);
-
-		_fetchEncrypted(_PV_CLIENT_REQUEST_DOWNLOAD, slot, 0, null, null, null, function(resp) {
+		_fetchEncrypted(aes_enc, binTs, uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
-			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
-			totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+			if (!fbk) fbk = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
 
 			progressCallback("Decrypting (AES) chunk 1 of " + totalChunks, 1, totalChunks * 2);
-			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, 0), async function(dec) {
+			_decryptMfk(resp.slice(9), _getMfk(fbk, 0), async function(dec) {
 				progressCallback("Decrypting (ChaCha20) chunk 1 of " + totalChunks, 1.333, totalChunks * 2);
-				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
-				progressCallback("Writing chunk 1 of " + totalChunks, 1.667, totalChunks * 2);
+				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fbk, 0));
 
-				fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
+				const fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
 				const lenPadding = dec[0];
-				dec = dec.slice(2 + dec[1]);
 
+				doneCallback(dec.slice(2 + dec[1]), fileName, totalBlocks, lenPadding);
+			});
+		});
+	};
+
+	this.downloadFile = async function(slot, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(endCallback)!=="function"){return;}
+		let fileHandle = null;
+		if (window.showSaveFilePicker) {
+			fileHandle = await window.showSaveFilePicker({suggestedName: (_files[slot]) ? _files[slot].path : "Unknown"});
+		}
+
+		const binTs = _getBinTs();
+		_downloadFile(_own_uid, null, slot, await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, progressCallback, async function(dec, fileName, totalBlocks, lenPadding) {
+			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+
+			if (totalChunks > 1) {
+				if (!fileHandle) {endCallback("This browser does not support downloading large files"); return;}
+
+				const writer = await fileHandle.createWritable();
+				writer.write(dec);
+
+				downloadChunks(slot, 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
+			} else {
 				if (fileHandle) {
-					const writer = await fileHandle.createWritable();
-
-					if (totalChunks > 1) {
-						writer.write(dec);
-						downloadChunks(slot, 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
-					} else {
-						writer.write(dec.slice(0, dec.length - lenPadding));
-						writer.close();
-						endCallback("Done");
-					}
+					writer.write(dec.slice(0, dec.length - lenPadding));
+					writer.close();
+					endCallback("Done");
 				} else {
 					const a = document.createElement("a");
 					a.href = URL.createObjectURL(new Blob([dec.slice(0, dec.length - lenPadding)]));
@@ -451,17 +534,17 @@ function PostVault(readyCallback) {
 					a.download = "";
 					endCallback("Done");
 				}
-			});
+			}
 		});
 	};
 
-	this.downloadIndex = function(callback) {if(typeof(callback)!=="function"){return;}
-		_fetchEncrypted(_PV_CLIENT_REQUEST_DOWNLOAD, 0, 0, null, null, null, function(resp) {
+	this.downloadIndex = async function(callback) {if(typeof(callback)!=="function"){return;}
+		const binTs = _getBinTs();
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, 0, binTs), binTs, _own_uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {callback(resp); return;}
 
-			const binTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(0, totalBlocks, binTs);
+			const fileBaseKey = _getFileBaseKey(0, totalBlocks, resp.slice(0, 5));
 
 			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey, 0), function(dec) {
 				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey, 0));
@@ -469,17 +552,19 @@ function PostVault(readyCallback) {
 
 				let n = 0;
 				for (let i = 0; n < dec.length; i++) {
-					if (dec[n] == 0) {n++; continue;}
+					const lenPath = dec[n];
+					if (lenPath === 0) {n++; continue;}
 
-					const fileTime = new Uint32Array(dec.slice(n, n + 4).buffer)[0];
-					const fileBlocks = new Uint32Array(dec.slice(n + 4, n + 8).buffer)[0];
-					
+					const fileBinTs = dec.slice(n + 1, n + 6);
+					const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
+					const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
+
 					let fileName;
-					try {fileName = sodium.to_string(dec.slice(n + 9, n + 9 + dec[n + 8]));}
+					try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
 					catch(e) {fileName = "Error: " + e;}
-					
-					_files[i] = new _pvFile(fileName, fileTime, fileBlocks);
-					n += 9 + dec[n + 8];
+
+					_files[i] = new _pvFile(fileName, fileTime, fileBinTs, fileBlocks);
+					n += 14 + lenPath;
 				}
 
 				callback(0);
@@ -487,8 +572,9 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.deleteFile = function(slot, callback) {if(typeof(slot)!=="number" || typeof(callback)!=="function"){return;}
-		_fetchEncrypted(_PV_CLIENT_REQUEST_DELETE, slot, 0, null, null, null, function(resp) {
+	this.deleteFile = async function(slot, callback) {if(typeof(slot)!=="number" || typeof(callback)!=="function"){return;}
+		const binTs = _getBinTs();
+		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DELETE, slot, binTs), binTs, _own_uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {
 				callback(resp);
 				return;
@@ -510,6 +596,67 @@ function PostVault(readyCallback) {
 		_own_uid = new Uint16Array(sodium.crypto_aead_chacha20poly1305_encrypt("UserID", null, null, new Uint8Array([0,0,0,0,0,0,0,0]), _own_uak).slice(0, 2).buffer)[0] & 4095;
 
 		callback(true);
+	};
+
+	const b84_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+=-?.,[]{}'";
+
+	this.getShareLink = async function(slot) {
+		const binTs = _getBinTs();
+		const aes_enc = await _fe_aes_enc(_PV_CMD_DOWNLOAD | _PV_FLAG_SHARED, slot, binTs);
+		const fbk = _getFileBaseKey(slot, _files[slot].blocks, _files[slot].binTs);
+
+		const binLink = new Uint8Array(fbk.length + binTs.length + aes_enc.length + 2);
+		binLink.set(fbk);
+		binLink.set(binTs, fbk.length);
+		binLink.set(aes_enc, fbk.length + binTs.length);
+		binLink.set(new Uint8Array(new Uint16Array([_own_uid]).buffer), fbk.length + binTs.length + aes_enc.length);
+
+		let b = 0n;
+		for (let i = 0; i < 58; i++) {
+			b += BigInt(binLink[i]) * (256n ** BigInt(i));
+		}
+
+		let url = document.documentURI + "#";
+		for (let i = 0; i < 72; i++) {
+			let y = b % 84n;
+			url += b84_chars[Number(y)];
+			b -= y;
+			b /= 84n;
+		}
+
+		return url;
+	};
+
+	this.sharedLink_get = function(url, infoCallback, progressCallback, endCallback) {if(typeof(url)!=="string" || url.length!=72){return;}
+		let b = 0n;
+		for (let i = 0; i < 72; i++) {
+			b += BigInt(b84_chars.indexOf(url[i])) * (84n ** BigInt(i));
+		}
+
+		let bin = new Uint8Array(58);
+		for (let i = 0; i < 58; i++) {
+			let y = b % 256n;
+			bin[i] = Number(y);
+			b -= y;
+			b /= 256n;
+		}
+
+		const shr_fbk = bin.slice(0, sodium.crypto_kdf_KEYBYTES);
+		const shr_binTs = bin.slice(sodium.crypto_kdf_KEYBYTES, sodium.crypto_kdf_KEYBYTES + 5);
+		const shr_aes_enc = bin.slice(sodium.crypto_kdf_KEYBYTES + 5, sodium.crypto_kdf_KEYBYTES + 8 + crypto_aead_aes256gcm_ABYTES);
+		const shr_uid = new Uint16Array(bin.slice(sodium.crypto_kdf_KEYBYTES + 8 + crypto_aead_aes256gcm_ABYTES).buffer)[0];
+
+		infoCallback(String.fromCharCode(97 + (shr_uid & 15)) + String.fromCharCode(97 + ((shr_uid >> 4) & 15)) + String.fromCharCode(97 + ((shr_uid >> 8) & 15)), new Uint32Array(shr_binTs.slice(0, 4).buffer)[0] + (shr_binTs[4] * Math.pow(2, 32)));
+
+		_downloadFile(shr_uid, shr_fbk, null, shr_aes_enc, shr_binTs, progressCallback, function(dec, fileName, totalBlocks, lenPadding) {
+			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
+
+			_share_chunk1 = (totalChunks === 1) ? dec.slice(0, dec.length - lenPadding) : dec;
+			_share_blocks = totalBlocks;
+			_share_filename = fileName;
+
+			endCallback(fileName, (totalBlocks * _PV_BLOCKSIZE) - lenPadding, _getFileType(fileName), _share_chunk1);
+		});
 	};
 
 	readyCallback(true);

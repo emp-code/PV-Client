@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="en">
 	<head>
+		<link rel="stylesheet" type="text/css" href="main.css">
+
 		<meta name="postvault.spk" content="">
 		<meta name="postvault.url" content="">
 
@@ -9,29 +11,24 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 
 		<title>PostVault</title>
-
-		<style>
-			html {
-				background: black;
-				color: white;
-			}
-			
-			time {
-				font-family: monospace;
-			}
-		</style>
 	</head>
 
 	<body>
-		<div>
+		<div id="div_load">Loading...</div>
+
+		<div id="div_shared" hidden>
+			<div><p id="share_status"></p></div>
+			<div></div>
+			<div>Shared by <span id="share_uid"></span> on <span id="share_time"></span></div>
+		</div>
+
+		<div id="div_entry" hidden>
 			<h1>PostVault</h1>
-			<p><input type="password" maxlength="64" pattern="[0-9a-f]{64}" required autocomplete="current-password" autofocus></p>
+			<p><input type="password" maxlength="64" pattern="[0-9a-f]{64}" required autocomplete="current-password"></p>
 			<p><button>Enter</button></p>
 		</div>
 
-		<div hidden>Loading...</div>
-
-		<div hidden>
+		<div id="div_files" hidden>
 			<div>
 				<p>Status: <span id="progress_text">Idle</span></p>
 				<meter id="progress_meter">Progress</meter>

@@ -1,0 +1,49 @@
+@media (prefers-color-scheme: dark) {
+	body, input {
+		background: #000;
+		color: #ccc;
+	}
+}
+
+html, body {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+#div_shared {
+	height: 100%;
+	width: fit-content;
+	margin: 0 auto 0 auto;
+
+	display: grid;
+	grid-template-columns: auto;
+	grid-template-rows: auto 1fr auto;
+}
+
+#div_shared > div:nth-child(1) {
+	display: flex;
+	justify-content: space-between;
+}
+
+#div_shared > div:nth-child(2).image {
+	display: grid;
+	align-content: center;
+	justify-content: center;
+}
+
+#div_shared > div:nth-child(3) {
+	text-align: center;
+}
+
+#share_uid {
+	font-family: monospace, monospace;
+}
+
+time {
+	font-family: monospace;
+}
+
+[hidden] {
+	display: none !important;
+}
