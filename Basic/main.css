@@ -32,6 +32,11 @@ html, body {
 	justify-content: center;
 }
 
+#div_shared > div:nth-child(2).text {
+	font-family: monospace, monospace;
+	white-space: pre;
+}
+
 #div_shared > div:nth-child(3) {
 	text-align: center;
 }

@@ -27,7 +27,6 @@ sodium.ready.then(function() {
 				break;
 
 				case "text":
-					d2.className = "txt";
 					el = document.createElement("p");
 					el.textContent = sodium.to_string(fileData);
 				break;
@@ -172,6 +171,7 @@ sodium.ready.then(function() {
 
 			const shBtn = document.createElement("button");
 			shBtn.textContent = "Share";
+
 			shBtn.onclick = async function() {
 				await navigator.clipboard.writeText(await vault.getShareLink(f));
 				document.getElementById("progress_text").textContent = "Link copied to clipboard"
