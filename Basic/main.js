@@ -32,6 +32,19 @@ sodium.ready.then(function() {
 					el.textContent = sodium.to_string(fileData);
 				break;
 
+				case "audio":
+				case "video":
+					el = document.createElement(fileType);
+					el.controls = "controls";
+					el.src = URL.createObjectURL(new Blob([fileData.buffer]));
+				break;
+
+				case "pdf":
+					el = document.createElement("embed");
+					el.type = "application/pdf";
+					el.src = URL.createObjectURL(new Blob([fileData.buffer], {type: "application/pdf"}));
+				break;
+
 				default: return;
 			}
 
