@@ -659,5 +659,34 @@ function PostVault(readyCallback) {
 		});
 	};
 
+	this.sharedLink_save = async function() {
+		if (!_share_chunk1) return;
+
+		if (_share_blocks > _PV_CHUNKSIZE / _PV_BLOCKSIZE) {
+			// TODO: Large share download
+			return;
+		}
+
+		if (window.showSaveFilePicker) {
+			const fileHandle = await window.showSaveFilePicker({suggestedName: _share_filename});
+
+			if (fileHandle) {
+				const writer = await fileHandle.createWritable();
+				writer.write(_share_chunk1);
+				writer.close();
+			}
+		} else {
+			const a = document.createElement("a");
+			a.href = URL.createObjectURL(new Blob([_share_chunk1]));
+			a.download = _share_filename;
+			a.click();
+
+			URL.revokeObjectURL(a.href);
+			a.href = "";
+			a.download = "";
+			endCallback("Done");
+		}
+	};
+
 	readyCallback(true);
 }

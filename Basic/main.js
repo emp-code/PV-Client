@@ -40,6 +40,7 @@ sodium.ready.then(function() {
 			d2.appendChild(el);
 		});
 
+		document.getElementById("share_save").onclick = function() {vault.sharedLink_save();};
 		return;
 	}
 
