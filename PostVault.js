@@ -15,6 +15,7 @@ function PostVault(readyCallback) {
 
 	const _PV_APIURL = document.head.querySelector("meta[name='postvault.url']").content;
 	const _PV_DOCSPK = document.head.querySelector("meta[name='postvault.spk']").content;
+	const _PV_EXPIRATION = ["5 minutes", "15 minutes", "1 hour", "4 hours", "12 hours", "24 hours", "3 days", "7 days", "2 weeks", "1 month", "3 months", "6 months", "12 months", "2 years", "5 years", "∞"];
 
 //	if (!_PV_DOMAIN || !new RegExp(/^[0-9a-z.-]{1,63}\.[0-9a-z-]{2,63}$/).test(_PV_DOMAIN) || !_PV_DOCSPK || !new RegExp("^[0-9A-f]{" + (sodium.crypto_box_PUBLICKEYBYTES * 2).toString() + "}$").test(_PV_DOCSPK)) {
 //		readyCallback(false);
@@ -284,6 +285,8 @@ function PostVault(readyCallback) {
 
 	// Public functions
 
+	this.getExpirationValues = function() {return _PV_EXPIRATION;};
+
 	this.getFolderContents = function(basePath, wantFiles, wantFolders) {if(typeof(basePath)!=="string") return;
 		if (basePath !== "" && !basePath.endsWith("/")) basePath += "/";
 		if (basePath.startsWith("/")) basePath = basePath.substr(1);
@@ -307,7 +310,7 @@ function PostVault(readyCallback) {
 		if (!wantFiles && wantFolders) list.sort();
 
 		return list;
-	}
+	};
 
 	this.getFilePath = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].path : null;};
 	this.getFileSize = function(num) {if(typeof(num)!=="number") return; return _files[num]? _files[num].blocks * _PV_BLOCKSIZE : null;};
@@ -318,7 +321,7 @@ function PostVault(readyCallback) {
 		let b = 0;
 		_files.forEach(function(f) {b += f.blocks;});
 		return b * _PV_BLOCKSIZE;
-	}
+	};
 
 	this.moveFile = function(num, newPath) {if(typeof(num)!=="number" || typeof(newPath)!=="string" || newPath.length<1 || !_files[num]) return false; _files[num].path = newPath; return true;};
 
@@ -363,7 +366,7 @@ function PostVault(readyCallback) {
 				_uploadChunks(file, slot, binTs, totalBlocks, lenPadding, offset, totalChunks, chunk + 1, progressCallback, endCallback);
 			}
 		});
-	}
+	};
 
 	this.uploadFile = async function(folderPath, file, progressCallback, endCallback) {if(typeof(folderPath)!=="string" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
 		if (folderPath && folderPath.startsWith("/")) folderPath = folderPath.substr(1);
@@ -600,9 +603,11 @@ function PostVault(readyCallback) {
 
 	const b84_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+=-?.,[]{}'";
 
-	this.getShareLink = async function(slot) {
+	this.createShareLink = async function(slot, expiration) {
+		if (typeof(slot) !== "number" || slot < 1 || slot > 65535 || typeof(expiration) !== "number" || expiration < 0 || expiration > 15) return;
+
 		const binTs = _getBinTs();
-		const aes_enc = await _fe_aes_enc(_PV_CMD_DOWNLOAD | _PV_FLAG_SHARED, slot, binTs);
+		const aes_enc = await _fe_aes_enc(_PV_CMD_DOWNLOAD | _PV_FLAG_SHARED | (expiration << 1), slot, binTs);
 		const fbk = _getFileBaseKey(slot, _files[slot].blocks, _files[slot].binTs);
 
 		const binLink = new Uint8Array(fbk.length + binTs.length + aes_enc.length + 2);

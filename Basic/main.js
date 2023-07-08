@@ -173,7 +173,7 @@ sodium.ready.then(function() {
 			shBtn.textContent = "Share";
 
 			shBtn.onclick = async function() {
-				await navigator.clipboard.writeText(await vault.getShareLink(f));
+				await navigator.clipboard.writeText(await vault.createShareLink(f, Number(document.getElementById("share_expiration").value)));
 				document.getElementById("progress_text").textContent = "Link copied to clipboard"
 			};
 			elLi.append(shBtn);
@@ -183,6 +183,10 @@ sodium.ready.then(function() {
 
 		document.getElementById("totalfiles").textContent = vault.getTotalFiles();
 		document.getElementById("totalsize").textContent = getDisplaySize(vault.getTotalSize());
+	}
+
+	document.querySelector("input[type=range]").oninput = function() {
+		this.parentElement.children[1].textContent = vault.getExpirationValues()[this.value];
 	}
 
 	document.getElementById("btn_ind").onclick = function() {
