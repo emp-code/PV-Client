@@ -684,7 +684,6 @@ function PostVault(readyCallback) {
 			URL.revokeObjectURL(a.href);
 			a.href = "";
 			a.download = "";
-			endCallback("Done");
 		}
 	};
 
