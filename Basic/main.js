@@ -13,6 +13,7 @@ sodium.ready.then(function() {
 
 		vault.sharedLink_get(document.location.hash.substr(1), function(shr_uid, shr_ts) {
 			document.getElementById("share_uid").textContent = shr_uid;
+			document.getElementById("share_date").dateTime = new Date(shr_ts).toISOString();
 			document.getElementById("share_date").textContent = new Date(shr_ts).toISOString().substr(0, 10);
 		}, function(status) {
 			document.getElementById("share_status").textContent = status;
