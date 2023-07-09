@@ -13,7 +13,7 @@ sodium.ready.then(function() {
 
 		vault.sharedLink_get(document.location.hash.substr(1), function(shr_uid, shr_ts) {
 			document.getElementById("share_uid").textContent = shr_uid;
-			document.getElementById("share_time").textContent = new Date(shr_ts).toISOString();
+			document.getElementById("share_date").textContent = new Date(shr_ts).toISOString().substr(0, 10);
 		}, function(status) {
 			document.getElementById("share_status").textContent = status;
 		}, function(fileName, fileSize, fileType, fileData) {
@@ -47,9 +47,11 @@ sodium.ready.then(function() {
 				default: return;
 			}
 
-			const d2 = document.querySelector("#div_shared > div:nth-child(2)");
-			d2.className = fileType;
-			d2.appendChild(el);
+			const m = document.querySelector("#div_shared main");
+			const h = getComputedStyle(m).height;
+			m.style.height = h;
+			el.style.height = h;
+			m.appendChild(el);
 		});
 
 		document.getElementById("share_save").onclick = function() {vault.sharedLink_save();};

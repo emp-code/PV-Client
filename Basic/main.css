@@ -21,24 +21,52 @@ html, body {
 	grid-template-rows: auto 1fr auto;
 }
 
-#div_shared > div:nth-child(1) {
+#div_shared {
+	background: #111;
+
+	height: 100%;
+	width: fit-content;
+	margin: auto;
+
+	display: grid;
+	grid-template-columns: auto;
+	grid-template-rows: auto 1fr auto;
+}
+
+#div_shared, #div_shared button {
+	font-family: monospace, monospace;
+}
+
+#div_shared header, #div_shared footer {
 	display: flex;
 	justify-content: space-between;
 }
 
-#div_shared > div:nth-child(2).image {
-	display: grid;
-	align-content: center;
-	justify-content: center;
+#div_shared header div, #div_shared footer div {
+	white-space: nowrap;
+	display: block;
+	margin: 0;
 }
 
-#div_shared > div:nth-child(2).text {
-	font-family: monospace, monospace;
-	white-space: pre;
+#div_shared header div:last-child, #div_shared footer div:last-child {
+	margin: 0 0 0 1em;
 }
 
-#div_shared > div:nth-child(3) {
-	text-align: center;
+#div_shared main {
+	height: 100%;
+}
+
+#div_shared main video {
+	max-width: 100%;
+}
+
+#div_shared main embed {
+	width: 100vw;
+}
+
+#div_shared img {
+	object-fit: contain;
+	width: 100%;
 }
 
 #share_uid {
