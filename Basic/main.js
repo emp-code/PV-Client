@@ -8,7 +8,6 @@ sodium.ready.then(function() {
 	});
 
 	if (document.location.hash) {
-		document.getElementById("div_load").hidden = true;
 		document.getElementById("div_shared").hidden = false;
 
 		vault.sharedLink_get(document.location.hash.substr(1), function(shr_uid, shr_ts) {
@@ -252,15 +251,15 @@ sodium.ready.then(function() {
 				return;
 			}
 
-			document.getElementById("div_entry").hidden = true;
-			document.getElementById("div_files").hidden = false;
-
 			vault.downloadIndex(function(status) {
-				if (status === 0) displayFiles("");
+				if (status === 0) {
+					document.getElementById("div_entry").hidden = true;
+					document.getElementById("div_files").hidden = false;
+					displayFiles("");
+				}
 			});
 		});
 	};
 
-	document.getElementById("div_load").hidden = true;
 	document.getElementById("div_entry").hidden = false;
 });
