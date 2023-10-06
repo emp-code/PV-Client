@@ -1,7 +1,13 @@
 "use strict";
 
 function PostVault(readyCallback) {
+	const crypto_aead_aegis256_KEYBYTES = 32;
+	const crypto_aead_aegis256_NPUBBYTES = 32;
 	const crypto_aead_aes256gcm_ABYTES = 16;
+
+	const _AEM_SECURITY_KEYID_USER_UAK = 5;
+	const _AEM_SECURITY_UAK_LEN = 32;
+
 	const _PV_CHUNKSIZE = 16777216;
 	const _PV_BLOCKSIZE = 16;
 
@@ -71,56 +77,111 @@ function PostVault(readyCallback) {
 		callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : null);
 	};
 
-	const _fe_aes_enc = async function(flags, slot, binTs) {
-		const aes_nonce = new Uint8Array(12); // 96 bits
-		aes_nonce.set(binTs);
+	const _fe_create_inner = async function(binTs, slot, flags) {
+		const secretHash = sodium.crypto_generichash(3 + sodium.crypto_onetimeauth_KEYBYTES, binTs, _own_uak);
 
-		const aes_src = new Uint8Array(3);
-		aes_src.set(new Uint8Array(new Uint16Array([slot]).buffer));
-		aes_src[2] = flags;
+		const src = new Uint8Array(3);
+		src.set(new Uint8Array(new Uint16Array([slot]).buffer));
+		src[2] = flags;
 
-		return new Uint8Array(await window.crypto.subtle.encrypt({name: "AES-GCM", iv: aes_nonce}, await window.crypto.subtle.importKey("raw", _own_uak, {"name": "AES-GCM"}, false, ["encrypt"]), aes_src));
+		const enc = new Uint8Array(3 + sodium.crypto_onetimeauth_BYTES);
+		enc[0] = src[0] ^ secretHash[0];
+		enc[1] = src[1] ^ secretHash[1];
+		enc[2] = src[2] ^ secretHash[2];
+
+		enc.set(sodium.crypto_onetimeauth(enc.slice(0, 3), secretHash.slice(3)), 3);
+		return enc;
 	};
 
-	const _fetchEncrypted = async function(aes_enc, binTs, uid, chunk, content, mfk, callback) {
+	const _fe_secretHash = function(length, our_pk, our_sk, variation) {
+		const shared_secret = sodium.crypto_scalarmult(our_sk, _PV_SPK);
+		const src = new Uint8Array(shared_secret.length + our_pk.length + _PV_SPK.length);
+
+		switch (variation) {
+			case 0:
+				src.set(shared_secret)
+				src.set(our_pk, shared_secret.length);
+				src.set(_PV_SPK, shared_secret.length + our_pk.length);
+			break;
+
+			case 1:
+				src.set(shared_secret)
+				src.set(_PV_SPK, shared_secret.length);
+				src.set(our_pk, shared_secret.length + _PV_SPK.length);
+			break;
+
+			case 2:
+				src.set(our_pk);
+				src.set(_PV_SPK, our_pk.length);
+				src.set(shared_secret, our_pk.length + _PV_SPK.length)
+			break;
+
+			default: return null;
+		}
+
+		return sodium.crypto_generichash(length, src, null);
+	}
+
+	const _fetchEncrypted = async function(inner_enc, binTs, uid, chunk, content, mfk, callback) {
 		await new Promise(resolve => setTimeout(resolve, 1)); // Ensure requests are never made within the same millisecond
 
-		const box_src = new Uint8Array(8 + aes_enc.length);
-		box_src.set(binTs);
-		box_src.set(new Uint8Array(new Uint32Array([uid | (chunk << 12)]).buffer).slice(0, 3), 5);
-		box_src.set(aes_enc, 8);
+		const src = new Uint8Array(8 + inner_enc.length);
+		src.set(binTs);
+		src.set(new Uint8Array(new Uint32Array([uid | (chunk << 12)]).buffer).slice(0, 3), 5);
+		src.set(inner_enc, 8);
 
-		const box_keys = sodium.crypto_box_keypair();
-		const box_nonce = new Uint8Array(sodium.crypto_box_NONCEBYTES);
-		box_nonce.fill(0x01);
-		const box_enc = sodium.crypto_box_easy(box_src, box_nonce, _PV_SPK, box_keys.privateKey);
+		// Generate ephemeral client keys
+		const our_sk = new Uint8Array(sodium.crypto_scalarmult_SCALARBYTES);
+		window.crypto.getRandomValues(our_sk);
+		const our_pk = sodium.crypto_scalarmult_base(our_sk);
 
-		const box_wrap = new Uint8Array(box_enc.length + sodium.crypto_box_PUBLICKEYBYTES);
-		box_wrap.set(box_enc);
-		box_wrap.set(box_keys.publicKey, box_enc.length);
+		let secretHash = _fe_secretHash(src.length + sodium.crypto_onetimeauth_KEYBYTES, our_pk, our_sk, 0);
 
-		let postBox;
+		const final = new Uint8Array(src.length + sodium.crypto_onetimeauth_BYTES + our_pk.length);
+		for (let i = 0; i < src.length; i++) {
+			final[i] = src[i] ^ secretHash[i];
+		}
+
+		final.set(sodium.crypto_onetimeauth(final.slice(0, src.length), secretHash.slice(src.length)), src.length);
+		final.set(our_pk, src.length + sodium.crypto_onetimeauth_BYTES);
+
+		let post_enc = null;
 		if (content && (typeof(content) === "object")) {
-			const postBox_src = new Uint8Array(content.length + 32);
-			postBox_src.set(mfk);
-			postBox_src.set(content, 32);
+			const post_src = new Uint8Array(content.length + mfk.length);
+			post_src.set(mfk);
+			post_src.set(content, mfk.length);
 
-			box_nonce.fill(0x02);
-			postBox = sodium.crypto_box_easy(postBox_src, box_nonce, _PV_SPK, box_keys.privateKey);
-		} else postBox = null;
+			const post_nonce = new Uint8Array(crypto_aead_aegis256_NPUBBYTES);
+			post_nonce.fill(0xFF);
 
-		_fetchBinary(box_wrap, postBox, function(result_box) {
-			if (!result_box) {callback(-1); return;}
+			secretHash = _fe_secretHash(crypto_aead_aegis256_KEYBYTES, our_pk, our_sk, 1);
+			post_enc = sodium.crypto_aead_aegis256_encrypt(post_src, null, null, post_nonce, secretHash);
+		}
 
-			box_nonce.fill(0xFF);
+		_fetchBinary(final, post_enc, function(result_enc) {
+			if (!result_enc || result_enc.length < 17) {callback(-1); return;}
+
+			if (result_enc.length === 17) {
+				secretHash = _fe_secretHash(1 + sodium.crypto_onetimeauth_KEYBYTES, our_pk, our_sk, 2);
+
+				if (!sodium.crypto_onetimeauth_verify(result_enc.slice(1), result_enc.slice(0, 1), secretHash.slice(1))) {
+					callback(-2);
+					return;
+				}
+
+				callback(result_enc[0] ^ secretHash[0]);
+				return;
+			}
+
+			secretHash = _fe_secretHash(crypto_aead_aegis256_KEYBYTES, our_pk, our_sk, 2);
+			const nonce = new Uint8Array(crypto_aead_aegis256_NPUBBYTES);
+			nonce.fill(0xFF);
 
 			let dec;
-			try {dec = sodium.crypto_box_open_easy(result_box, box_nonce, _PV_SPK, box_keys.privateKey);}
+			try {dec = sodium.crypto_aead_aegis256_decrypt(null, result_enc, null, nonce, secretHash);}
 			catch(e) {callback(null); return;}
 
-			// TODO: 5 bytes: LastMod
-
-			callback(dec.slice(5));
+			callback(dec);
 		});
 	};
 
@@ -332,8 +393,8 @@ function PostVault(readyCallback) {
 		const fbk = _getFileBaseKey(0, totalBlocks, binTs);
 		const index_enc = sodium.crypto_aead_chacha20poly1305_encrypt(index_src, null, null, _getNonce(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fbk, 0));
 
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD, 0, binTs), binTs, _own_uid, 0, index_enc, _getMfk(fbk, 0), function(status) {
-			callback(typeof(status) === "number" ? status : status[0]);
+		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_UPLOAD), binTs, _own_uid, 0, index_enc, _getMfk(fbk, 0), function(status) {
+			callback(status);
 		});
 	};
 
@@ -357,8 +418,8 @@ function PostVault(readyCallback) {
 		progressCallback("Uploading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 
 		const bts = _getBinTs();
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, slot, bts), bts, _own_uid, chunk, aead_enc, _getMfk(fileBaseKey, chunk), function(status) {
-			if (typeof(status) === "number") {
+		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD), bts, _own_uid, chunk, aead_enc, _getMfk(fileBaseKey, chunk), function(status) {
+			if (status !== 0) {
 				endCallback("Error: " + status);
 			} else if (chunk + 1 === totalChunks) {
 				endCallback("Done");
@@ -410,8 +471,8 @@ function PostVault(readyCallback) {
 
 		progressCallback("Uploading chunk 1 of " + totalChunks, 0, totalChunks * 2);
 
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_UPLOAD, slot, binTs), binTs, _own_uid, 0, aead_enc, _getMfk(fileBaseKey, 0), function(status) {
-			if (typeof(status) === "number") {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_UPLOAD), binTs, _own_uid, 0, aead_enc, _getMfk(fileBaseKey, 0), function(status) {
+			if (status !== 0) {
 				endCallback("Error: " + status);
 			} else {
 				_files[slot] = new _pvFile(folderPath + file.name, Math.round(file.lastModified / 1000), binTs, totalBlocks);
@@ -432,7 +493,7 @@ function PostVault(readyCallback) {
 		progressCallback("Downloading first chunk", 0, 1);
 
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, _own_uid, 0, null, null, function(resp) {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, _own_uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
@@ -455,8 +516,8 @@ function PostVault(readyCallback) {
 		progressCallback("Downloading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
 
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, _own_uid, chunk, null, null, function(resp) {
-			if (typeof(resp) === "number") {writer.close(); endCallback("Fail: " + resp); return;}
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, _own_uid, chunk, null, null, function(resp) {
+			if (typeof(resp) === "number") {writer.close(); endCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
@@ -476,15 +537,15 @@ function PostVault(readyCallback) {
 
 				writer.write(dec);
 
-				downloadChunks(slot, chunk + 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
+				_downloadChunks(slot, chunk + 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
 			});
 		});
 	};
 
-	const _downloadFile = async function(uid, fbk, slot, aes_enc, binTs, progressCallback, doneCallback) {
+	const _downloadFile = async function(uid, fbk, slot, inner_enc, binTs, progressCallback, doneCallback) {
 		progressCallback("Downloading chunk 1 of " + (slot? Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE) : "?"), 0, 1);
 
-		_fetchEncrypted(aes_enc, binTs, uid, 0, null, null, function(resp) {
+		_fetchEncrypted(inner_enc, binTs, uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
@@ -511,7 +572,7 @@ function PostVault(readyCallback) {
 		}
 
 		const binTs = _getBinTs();
-		_downloadFile(_own_uid, null, slot, await _fe_aes_enc(_PV_CMD_DOWNLOAD, slot, binTs), binTs, progressCallback, async function(dec, fileName, totalBlocks, lenPadding) {
+		_downloadFile(_own_uid, null, slot, await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, progressCallback, async function(dec, fileName, totalBlocks, lenPadding) {
 			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
 
 			if (totalChunks > 1) {
@@ -520,7 +581,7 @@ function PostVault(readyCallback) {
 				const writer = await fileHandle.createWritable();
 				writer.write(dec);
 
-				downloadChunks(slot, 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
+				_downloadChunks(slot, 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
 			} else {
 				if (fileHandle) {
 					writer.write(dec.slice(0, dec.length - lenPadding));
@@ -543,7 +604,7 @@ function PostVault(readyCallback) {
 
 	this.downloadIndex = async function(callback) {if(typeof(callback)!=="function"){return;}
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DOWNLOAD, 0, binTs), binTs, _own_uid, 0, null, null, function(resp) {
+		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_DOWNLOAD), binTs, _own_uid, 0, null, null, function(resp) {
 			if (typeof(resp) === "number") {callback(resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
@@ -577,65 +638,63 @@ function PostVault(readyCallback) {
 
 	this.deleteFile = async function(slot, callback) {if(typeof(slot)!=="number" || typeof(callback)!=="function"){return;}
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_aes_enc(_PV_CMD_DELETE, slot, binTs), binTs, _own_uid, 0, null, null, function(resp) {
-			if (typeof(resp) === "number") {
-				callback(resp);
-				return;
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DELETE), binTs, _own_uid, 0, null, null, function(status) {
+			if (status === 0) {
+				_files[slot] = null;
 			}
 
-			_files[slot] = null;
-			callback(0);
+			callback(status);
 		});
 	};
 
-	this.setKeys = function(umk_hex, callback) {if(typeof(umk_hex)!=="string" || typeof(callback)!=="function"){return;}
-		if (umk_hex.length !== sodium.crypto_kdf_KEYBYTES * 2) {
+	this.setKeys = function(umk_b64, callback) {if(typeof(umk_b64)!=="string" || typeof(callback)!=="function"){return;}
+		if (umk_b64.length !== 64) {
 			callback(false);
 			return;
 		}
 
-		_own_umk = sodium.from_hex(umk_hex);
-		_own_uak = sodium.crypto_kdf_derive_from_key(32, 1, "PVt-Uak0", _own_umk);
-		_own_uid = new Uint16Array(sodium.crypto_aead_chacha20poly1305_encrypt("UserID", null, null, new Uint8Array([0,0,0,0,0,0,0,0]), _own_uak).slice(0, 2).buffer)[0] & 4095;
+		_own_umk = sodium.from_base64(umk_b64, sodium.base64_variants.ORIGINAL);
+		_own_uak = sodium.crypto_generichash(_AEM_SECURITY_UAK_LEN, new Uint8Array([_AEM_SECURITY_KEYID_USER_UAK]), _own_umk);
+		_own_uid = new Uint16Array(sodium.crypto_generichash(16, "UserID", _own_uak).slice(0, 2).buffer)[0] & 4095;
 
 		callback(true);
 	};
 
-	const b84_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+=-?.,[]{}'";
+	const b67_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.+#";
 
 	this.createShareLink = async function(slot, expiration) {
 		if (typeof(slot) !== "number" || slot < 1 || slot > 65535 || typeof(expiration) !== "number" || expiration < 0 || expiration > 15) return;
 
 		const binTs = _getBinTs();
-		const aes_enc = await _fe_aes_enc(_PV_CMD_DOWNLOAD | _PV_FLAG_SHARED | (expiration << 1), slot, binTs);
+		const inner_enc = await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD | _PV_FLAG_SHARED | (expiration << 1));
 		const fbk = _getFileBaseKey(slot, _files[slot].blocks, _files[slot].binTs);
 
-		const binLink = new Uint8Array(fbk.length + binTs.length + aes_enc.length + 2);
+		const binLink = new Uint8Array(fbk.length + binTs.length + inner_enc.length + 2);
 		binLink.set(fbk);
 		binLink.set(binTs, fbk.length);
-		binLink.set(aes_enc, fbk.length + binTs.length);
-		binLink.set(new Uint8Array(new Uint16Array([_own_uid]).buffer), fbk.length + binTs.length + aes_enc.length);
+		binLink.set(inner_enc, fbk.length + binTs.length);
+		binLink.set(new Uint8Array(new Uint16Array([_own_uid]).buffer), fbk.length + binTs.length + inner_enc.length);
 
 		let b = 0n;
-		for (let i = 0; i < 58; i++) {
+		for (let i = 0; i < binLink.length; i++) {
 			b += BigInt(binLink[i]) * (256n ** BigInt(i));
 		}
 
 		let url = document.documentURI + "#";
-		for (let i = 0; i < 72; i++) {
-			let y = b % 84n;
-			url += b84_chars[Number(y)];
+		for (let i = 0; i < 76; i++) {
+			let y = b % 67n;
+			url += b67_chars[Number(y)];
 			b -= y;
-			b /= 84n;
+			b /= 67n;
 		}
 
 		return url;
 	};
 
-	this.sharedLink_get = function(url, infoCallback, progressCallback, endCallback) {if(typeof(url)!=="string" || url.length!=72){return;}
+	this.sharedLink_get = function(url, infoCallback, progressCallback, endCallback) {if(typeof(url)!=="string" || url.length!=76){return;}
 		let b = 0n;
-		for (let i = 0; i < 72; i++) {
-			b += BigInt(b84_chars.indexOf(url[i])) * (84n ** BigInt(i));
+		for (let i = 0; i < 76; i++) {
+			b += BigInt(b67_chars.indexOf(url[i])) * (67n ** BigInt(i));
 		}
 
 		let bin = new Uint8Array(58);
@@ -648,14 +707,14 @@ function PostVault(readyCallback) {
 
 		const shr_fbk = bin.slice(0, sodium.crypto_kdf_KEYBYTES);
 		const shr_binTs = bin.slice(sodium.crypto_kdf_KEYBYTES, sodium.crypto_kdf_KEYBYTES + 5);
-		const shr_aes_enc = bin.slice(sodium.crypto_kdf_KEYBYTES + 5, sodium.crypto_kdf_KEYBYTES + 8 + crypto_aead_aes256gcm_ABYTES);
+		const shr_inner_enc = bin.slice(sodium.crypto_kdf_KEYBYTES + 5, sodium.crypto_kdf_KEYBYTES + 8 + crypto_aead_aes256gcm_ABYTES);
 		const shr_uid = new Uint16Array(bin.slice(sodium.crypto_kdf_KEYBYTES + 8 + crypto_aead_aes256gcm_ABYTES).buffer)[0];
 
 		const shr_username = String.fromCharCode(97 + (shr_uid & 15)) + String.fromCharCode(97 + ((shr_uid >> 4) & 15)) + String.fromCharCode(97 + ((shr_uid >> 8) & 15));
 		const shr_time = Number((BigInt(Date.now()) & ~((1n << 40n) - 1n)) | BigInt(new Uint32Array(shr_binTs.slice(0, 4).buffer)[0]) + BigInt(shr_binTs[4]) * BigInt(Math.pow(2, 32)));
 		infoCallback(shr_username, shr_time);
 
-		_downloadFile(shr_uid, shr_fbk, null, shr_aes_enc, shr_binTs, progressCallback, function(dec, fileName, totalBlocks, lenPadding) {
+		_downloadFile(shr_uid, shr_fbk, null, shr_inner_enc, shr_binTs, progressCallback, function(dec, fileName, totalBlocks, lenPadding) {
 			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
 
 			_share_chunk1 = (totalChunks === 1) ? dec.slice(0, dec.length - lenPadding) : dec;
