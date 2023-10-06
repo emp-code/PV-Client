@@ -137,6 +137,7 @@ sodium.ready.then(function() {
 						elSpan.onclick = "";
 						elLi.style.textDecoration = "line-through";
 					} else {
+						document.getElementById("progress_text").textContent = "Error: " + status;
 						btn.enabled = true;
 					}
 				});
