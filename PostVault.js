@@ -60,21 +60,23 @@ function PostVault(readyCallback) {
 	}
 
 	const _fetchBinary = async function(urlBase, postData, callback) {
-		const r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
-			method: postData? "POST" : "GET",
-			credentials: "omit",
-			headers: new Headers({
-				"Accept": "",
-				"Accept-Language": ""
-			}),
-			mode: "cors",
-			redirect: "error",
-			referrer: "",
-			referrerPolicy: "no-referrer",
-			body: (typeof(postData) === "object") ? postData : null
-		});
+		try {
+			const r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
+				method: postData? "POST" : "GET",
+				credentials: "omit",
+				headers: new Headers({
+					"Accept": "",
+					"Accept-Language": ""
+				}),
+				mode: "cors",
+				redirect: "error",
+				referrer: "",
+				referrerPolicy: "no-referrer",
+				body: (typeof(postData) === "object") ? postData : null
+			});
 
-		callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : null);
+			callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : -1);
+		} catch(e) {callback(-2);}
 	};
 
 	const _fe_create_inner = async function(binTs, slot, flags) {
@@ -159,7 +161,7 @@ function PostVault(readyCallback) {
 		}
 
 		_fetchBinary(final, post_enc, function(result_enc) {
-			if (!result_enc || result_enc.length < 17) {callback(-1); return;}
+			if (!result_enc || typeof(result_enc) !== "object" || result_enc.length < 17) {callback((typeof(result_enc) === "number") ? result_enc : -1); return;}
 
 			if (result_enc.length === 17) {
 				secretHash = _fe_secretHash(1 + sodium.crypto_onetimeauth_KEYBYTES, our_pk, our_sk, 2);
