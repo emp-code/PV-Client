@@ -17,6 +17,7 @@ sodium.ready.then(function() {
 		}, function(status) {
 			document.getElementById("share_status").textContent = status;
 		}, function(fileName, fileSize, fileType, fileData) {
+			document.title = fileName;
 			document.getElementById("share_status").textContent = fileName + " (" + fileSize + " bytes)";
 
 			let el;
