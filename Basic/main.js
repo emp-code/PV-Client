@@ -202,8 +202,8 @@ sodium.ready.then(function() {
 		});
 	}
 
-	function uploadFile(files, cur) {
-		vault.uploadFile(currentPath, files[cur],
+	function uploadFile(files, uploadPath, cur) {
+		vault.uploadFile(uploadPath, files[cur],
 			function(statusText, currentProgress, maxProgress) {
 				document.getElementById("progress_text").textContent = statusText;
 				document.getElementById("progress_meter").value = currentProgress;
@@ -213,7 +213,7 @@ sodium.ready.then(function() {
 				displayFiles(currentPath);
 
 				if (cur + 1 < files.length) {
-					uploadFile(files, cur + 1);
+					uploadFile(files, uploadPath, cur + 1);
 				} else {
 					document.getElementById("progress_text").textContent = statusText;
 					document.getElementById("progress_meter").value = 1;
@@ -235,7 +235,7 @@ sodium.ready.then(function() {
 
 		fileSelector.onchange = function() {
 			btn.disabled = true;
-			uploadFile(fileSelector.files, 0);
+			uploadFile(fileSelector.files, currentPath, 0);
 		};
 	};
 
@@ -254,11 +254,13 @@ sodium.ready.then(function() {
 			}
 
 			vault.downloadIndex(function(status) {
-				if (status === 0) {
-					document.getElementById("div_entry").hidden = true;
-					document.getElementById("div_files").hidden = false;
-					displayFiles("");
+				if (status !== 0) {
+					document.getElementById("progress_text").textContent = "Error getting index";
 				}
+
+				document.getElementById("div_entry").hidden = true;
+				document.getElementById("div_files").hidden = false;
+				displayFiles("");
 			});
 		});
 	};
