@@ -33,7 +33,7 @@ html, body {
 	grid-template-rows: auto 1fr auto;
 }
 
-#div_shared, #div_shared button {
+#share_status, #share_uid, #share_date, #div_shared button {
 	font-family: monospace, monospace;
 }
 
