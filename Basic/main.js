@@ -51,7 +51,7 @@ sodium.ready.then(function() {
 			const m = document.querySelector("#div_shared main");
 			const h = getComputedStyle(m).height;
 			m.style.height = h;
-			el.style.height = h;
+			if (fileType !== "text") el.style.height = h;
 			m.appendChild(el);
 		});
 
