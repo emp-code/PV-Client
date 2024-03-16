@@ -260,6 +260,8 @@ sodium.ready.then(function() {
 
 				document.getElementById("div_entry").hidden = true;
 				document.getElementById("div_files").hidden = false;
+				document.getElementById("share_expiration").value = 0;
+				document.getElementById("share_expiration").oninput();
 				displayFiles("");
 			});
 		});
