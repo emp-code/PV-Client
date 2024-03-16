@@ -189,7 +189,7 @@ sodium.ready.then(function() {
 		document.getElementById("totalsize").textContent = getDisplaySize(vault.getTotalSize());
 	}
 
-	document.querySelector("input[type=range]").oninput = function() {
+	document.getElementById("share_expiration").oninput = function() {
 		this.parentElement.children[1].textContent = vault.getExpirationValues()[this.value];
 	}
 
