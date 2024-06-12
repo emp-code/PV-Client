@@ -553,6 +553,7 @@ function PostVault(readyCallback) {
 				_downloadChunks(slot, 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
 			} else {
 				if (fileHandle) {
+					const writer = await fileHandle.createWritable();
 					writer.write(dec.slice(0, dec.length - lenPadding));
 					writer.close();
 					endCallback("Done");
