@@ -316,7 +316,7 @@ function PostVault(readyCallback) {
 		progressCallback("Uploading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 
 		const bts = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, true), bts, _own_uid, chunk, aead_enc, _getMfk_enc(fileBaseKey, binTs, slot), function(status) {
+		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, true), bts, _own_uid, chunk, aead_enc, _getMfk_enc(fileBaseKey, bts, slot), function(status) {
 			if (status !== 0) {
 				endCallback("Error: " + status);
 			} else if (chunk + 1 === totalChunks) {
