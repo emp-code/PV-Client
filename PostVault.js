@@ -1,9 +1,6 @@
 "use strict";
 
 function PostVault(readyCallback) {
-	const _AEM_SECURITY_KEYID_UAK = 0xE0;
-	const _AEM_SECURITY_UAK_LEN = 35;
-
 	const _PV_CHUNKSIZE = 16777216;
 	const _PV_BLOCKSIZE = 16;
 
@@ -30,9 +27,9 @@ function PostVault(readyCallback) {
 		this.blocks = blocks;
 	};
 
-	let _own_umk;
-	let _own_uak;
 	let _own_uid;
+	let _own_uak;
+	let _own_fmk;
 
 	let _files = [new _pvFile("", 0, null, 0)];
 
@@ -53,8 +50,9 @@ function PostVault(readyCallback) {
 	}
 
 	const _fetchBinary = async function(urlBase, postData, callback) {
+		let r;
 		try {
-			const r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
+			r = await fetch(_PV_APIURL + "/" + sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE), {
 				method: postData? "POST" : "GET",
 				credentials: "omit",
 				headers: new Headers({
@@ -67,25 +65,29 @@ function PostVault(readyCallback) {
 				referrerPolicy: "no-referrer",
 				body: (typeof(postData) === "object") ? postData : null
 			});
-
-			if (r.status === 204) {callback(0); return;}
-			callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : -1);
 		} catch(e) {callback(-2);}
+
+		if (!r) {callback(-1); return;}
+		if (r.status === 204) {callback(0); return;}
+		callback((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : -1);
 	};
 
-	const _fe_create_inner = async function(binTs, slot, flags) {
-		const secretHash = sodium.crypto_generichash(3 + sodium.crypto_onetimeauth_KEYBYTES, binTs, _own_uak);
-
+	const _fe_create_inner = async function(binTs, slot, flags, post) {
 		const src = new Uint8Array(3);
 		src.set(new Uint8Array(new Uint16Array([slot]).buffer));
 		src[2] = flags;
 
-		const enc = new Uint8Array(3 + sodium.crypto_onetimeauth_BYTES);
-		enc[0] = src[0] ^ secretHash[0];
-		enc[1] = src[1] ^ secretHash[1];
-		enc[2] = src[2] ^ secretHash[2];
+		const uak_nonce = new Uint8Array(8);
+		uak_nonce.set(binTs);
+		uak_nonce[7] = post? 2 : 1;
+		const uak_key = _aem_kdf_uak(3 + sodium.crypto_onetimeauth_KEYBYTES, uak_nonce);
 
-		enc.set(sodium.crypto_onetimeauth(enc.slice(0, 3), secretHash.slice(3)), 3);
+		const enc = new Uint8Array(3 + sodium.crypto_onetimeauth_BYTES);
+		enc[0] = src[0] ^ uak_key[0];
+		enc[1] = src[1] ^ uak_key[1];
+		enc[2] = src[2] ^ uak_key[2];
+
+		enc.set(sodium.crypto_onetimeauth(enc.slice(0, 3), uak_key.slice(3)), 3);
 		return enc;
 	};
 
@@ -152,29 +154,41 @@ function PostVault(readyCallback) {
 		return -1;
 	};
 
-	const _getFileBaseKey = function(slot, blocks, binTs) {
-		const bytes = new Uint8Array(11);
-		bytes.set(new Uint8Array(new Uint16Array([slot]).buffer));
-		bytes.set(new Uint8Array(new Uint32Array([blocks]).buffer), 2);
-		bytes.set(binTs, 6);
-		return sodium.crypto_generichash(32, bytes, _own_umk);
+	// Use the 360-bit User Master Key to generate additional keys
+	const _aem_kdf_umk = function(size, id, key) {
+		const counter = (id << 8) | (key[44] << 16);
+		return sodium.crypto_stream_chacha20_ietf_xor_ic(new Uint8Array(size), key.slice(32, 44), counter, key.slice(0, 32));
 	}
 
-	const _getUfk = function(fileBaseKey) {
-		return sodium.crypto_generichash(sodium.crypto_aead_chacha20poly1305_KEYBYTES, new Uint8Array([0x50]), fileBaseKey);
-	};
+	// Use the 296-bit User Access Key to generate key material
+	const _aem_kdf_uak = function(size, n) {
+		const counter = ((_own_uak[36] & 127) << 24) | ((_own_uak[36] & 128) << 16) | (64 << 16); // 64<<16: PV
+		const nonce = new Uint8Array([_own_uak[32], _own_uak[33], _own_uak[34], _own_uak[35], n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7]]);
+		return sodium.crypto_stream_chacha20_ietf_xor_ic(new Uint8Array(size), nonce, counter, _own_uak.slice(0, 32));
+	}
 
-	const _getMfk = function(fileBaseKey) {
-		return sodium.crypto_generichash(32, new Uint8Array([0x51]), fileBaseKey);
-	};
+	// Use the 296-bit File Master Key to generate the 285-bit File Base Key
+	const _getFbk = function(slot, blocks, binTs) {
+		const counter = blocks & 2147483647; // Avoid sign bit for compability
+		const u8s = new Uint8Array(new Uint16Array([slot]).buffer)
+		const nonce = new Uint8Array([_own_fmk[32], _own_fmk[33], _own_fmk[34], _own_fmk[35], _own_fmk[36], u8s[0], u8s[1], binTs[0], binTs[1], binTs[2], binTs[3], binTs[4]]);
 
-	const _getMfk_enc = function(fileBaseKey, binTs, slot) {
-		const mfk = _getMfk(fileBaseKey);
-		const xmfk_base = new Uint8Array(7);
+		const fbk = sodium.crypto_stream_chacha20_ietf_xor_ic(new Uint8Array(36), nonce, counter, _own_fmk.slice(0, 32));
+		fbk[35] &= 31;
+		return fbk;
+	}
+
+	// Use the 285-bit File Base Key to generate two 256-bit keys (UFK/MFK)
+	const _getUfk = function(fbk) {return sodium.crypto_stream_chacha20(64, fbk.slice(0, 32), new Uint8Array([fbk[32], fbk[33], fbk[34], fbk[35] & 31, 0, 0, 0, 0])).slice(0, 32);}
+	const _getMfk = function(fbk) {return sodium.crypto_stream_chacha20(64, fbk.slice(0, 32), new Uint8Array([fbk[32], fbk[33], fbk[34], fbk[35] & 31, 0, 0, 0, 0])).slice(32);}
+
+	const _getMfk_enc = function(fbk, binTs, slot) {
+		const xmfk_base = new Uint8Array(8);
 		xmfk_base.set(binTs);
 		xmfk_base.set(new Uint8Array(new Uint16Array([slot]).buffer), 5);
+		const xmfk = _aem_kdf_uak(32, xmfk_base);
 
-		const xmfk = sodium.crypto_generichash(32, xmfk_base, _own_uak);
+		const mfk = _getMfk(fbk);
 
 		return new Uint8Array([
 			mfk[0]  ^ xmfk[0],  mfk[1]  ^ xmfk[1],  mfk[2]  ^ xmfk[2],  mfk[3]  ^ xmfk[3],  mfk[4]  ^ xmfk[4],  mfk[5]  ^ xmfk[5],  mfk[6]  ^ xmfk[6],  mfk[7]  ^ xmfk[7],  mfk[8]  ^ xmfk[8],  mfk[9]  ^ xmfk[9],
@@ -183,19 +197,8 @@ function PostVault(readyCallback) {
 			mfk[30] ^ xmfk[30], mfk[31] ^ xmfk[31]]);
 	};
 
-	const _getChunkNonce = function(chunk) {
-		const n = new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES);
-		n.set(new Uint8Array(new Uint16Array([chunk]).buffer));
-		return n;
-	}
-
-	const _decryptMfk = async function(src, mfk, callback) {
-		const mfk_key = await window.crypto.subtle.importKey("raw", mfk, {"name": "AES-CTR"}, false, ["decrypt"]);
-		const firstBlock = src.slice(0, 16);
-		const dec = new Uint8Array(src.length);
-		dec.set(new Uint8Array(await window.crypto.subtle.decrypt({name: "AES-CTR", counter: new Uint8Array(16), length: 32}, mfk_key, firstBlock)).slice(0, 16));
-		dec.set(new Uint8Array(await window.crypto.subtle.decrypt({name: "AES-CTR", counter: firstBlock, length: 32}, mfk_key, src.slice(16))), 16);
-		callback(dec);
+	const _decryptMfk = function(src, mfk, nonce) {
+		return sodium.crypto_stream_chacha20_xor(src, nonce, mfk);
 	}
 
 	const _getFileType = function(filename) {
@@ -288,7 +291,7 @@ function PostVault(readyCallback) {
 	// Download/upload functions
 	const _uploadChunks = async function(file, slot, binTs, totalBlocks, lenPadding, offset, totalChunks, chunk, progressCallback, endCallback) {
 		progressCallback("Reading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
-		const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - sodium.crypto_aead_chacha20poly1305_ABYTES);
+		const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - 16);
 		const contentsAb = await contents.arrayBuffer();
 
 		let aead_src;
@@ -298,15 +301,22 @@ function PostVault(readyCallback) {
 		} else aead_src = new Uint8Array(contentsAb);
 
 		progressCallback("Encrypting chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 0.5, totalChunks * 2);
-		const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
-		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, _getChunkNonce(chunk), _getUfk(fileBaseKey));
+		const fileBaseKey = _getFbk(slot, totalBlocks, binTs);
 
-		offset += _PV_CHUNKSIZE - sodium.crypto_aead_chacha20poly1305_ABYTES;
+		const chunkNonce = new Uint8Array(12);
+		chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
+
+		const aead_enc = new Uint8Array(await window.crypto.subtle.encrypt(
+			{name: "AES-GCM", iv: new Uint8Array(12)},
+			await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
+			aead_src));
+
+		offset += _PV_CHUNKSIZE - 16;
 
 		progressCallback("Uploading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
 
 		const bts = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD), bts, _own_uid, chunk, aead_enc, _getMfk_enc(fileBaseKey, binTs, slot), function(status) {
+		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, true), bts, _own_uid, chunk, aead_enc, _getMfk_enc(fileBaseKey, binTs, slot), function(status) {
 			if (status !== 0) {
 				endCallback("Error: " + status);
 			} else if (chunk + 1 === totalChunks) {
@@ -321,52 +331,61 @@ function PostVault(readyCallback) {
 		progressCallback("Downloading chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2, totalChunks * 2);
 
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, _own_uid, chunk, null, null, function(resp) {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD, false), binTs, _own_uid, chunk, null, null, async function(resp) {
 			if (typeof(resp) === "number") {writer.close(); endCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
+			const fileBaseKey = _getFbk(slot, totalBlocks, resp.slice(0, 5));
+
+			const chunkNonce = new Uint8Array(12);
+			chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
+
+			progressCallback("Decrypting (ChaCha20) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.333, totalChunks * 2);
+			let dec = _decryptMfk(resp.slice(9), _getMfk(fileBaseKey), chunkNonce.slice(0, sodium.crypto_aead_chacha20poly1305_NPUBBYTES));
 
 			progressCallback("Decrypting (AES) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1, totalChunks * 2);
-			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey), async function(dec) {
-				progressCallback("Decrypting (ChaCha20) chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.333, totalChunks * 2);
-				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, _getChunkNonce(chunk), _getUfk(fileBaseKey));
+			dec = new Uint8Array(await window.crypto.subtle.decrypt(
+				{name: "AES-GCM", iv: chunkNonce},
+				await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["decrypt"]),
+				dec));
 
-				progressCallback("Writing chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.667, totalChunks * 2);
-				if (chunk + 1 === totalChunks) {
-					writer.write(dec.slice(0, dec.length - lenPadding));
-					writer.close();
-					endCallback("Done");
-					return;
-				}
+			progressCallback("Writing chunk " + (chunk + 1) + " of " + totalChunks, chunk * 2 + 1.667, totalChunks * 2);
+			if (chunk + 1 === totalChunks) {
+				writer.write(dec.slice(0, dec.length - lenPadding));
+				writer.close();
+				endCallback("Done");
+				return;
+			}
 
-				writer.write(dec);
+			writer.write(dec);
 
-				_downloadChunks(slot, chunk + 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
-			});
+			_downloadChunks(slot, chunk + 1, totalChunks, lenPadding, writer, progressCallback, endCallback);
 		});
 	};
 
 	const _downloadFile = async function(uid, fbk, slot, inner_enc, binTs, progressCallback, doneCallback) {
 		progressCallback("Downloading chunk 1 of " + (slot? Math.ceil((_files[slot].blocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE) : "?"), 0, 1);
 
-		_fetchEncrypted(inner_enc, binTs, uid, 0, null, null, function(resp) {
+		_fetchEncrypted(inner_enc, binTs, uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {doneCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
-			if (!fbk) fbk = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
+			if (!fbk) fbk = _getFbk(slot, totalBlocks, resp.slice(0, 5));
 
-			progressCallback("Decrypting (AES) chunk 1 of " + totalChunks, 1, totalChunks * 2);
-			_decryptMfk(resp.slice(9), _getMfk(fbk), async function(dec) {
-				progressCallback("Decrypting (ChaCha20) chunk 1 of " + totalChunks, 1.333, totalChunks * 2);
-				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fbk));
+			progressCallback("Decrypting (ChaCha20) chunk 1 of " + totalChunks, 3.333, totalChunks * 2);
+			let dec = _decryptMfk(resp.slice(9), _getMfk(fbk), new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES));
 
-				const fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
-				const lenPadding = dec[0];
+			progressCallback("Decrypting (AES) chunk 1 of " + totalChunks, 3, totalChunks * 2);
+			dec = new Uint8Array(await window.crypto.subtle.decrypt(
+				{name: "AES-GCM", iv: new Uint8Array(12)},
+				await window.crypto.subtle.importKey("raw", _getUfk(fbk), {"name": "AES-GCM"}, false, ["decrypt"]),
+				dec));
 
-				doneCallback(dec.slice(2 + dec[1]), fileName, totalBlocks, lenPadding);
-			});
+			const fileName = sodium.to_string(dec.slice(2, 2 + dec[1]));
+			const lenPadding = dec[0];
+
+			doneCallback(dec.slice(2 + dec[1]), fileName, totalBlocks, lenPadding);
 		});
 	};
 
@@ -415,10 +434,14 @@ function PostVault(readyCallback) {
 		const index_src = _genIndex();
 		const binTs = _getBinTs();
 		const totalBlocks = (index_src.length + sodium.crypto_aead_chacha20poly1305_ABYTES) / _PV_BLOCKSIZE;
-		const fbk = _getFileBaseKey(0, totalBlocks, binTs);
-		const index_enc = sodium.crypto_aead_chacha20poly1305_encrypt(index_src, null, null, new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fbk));
+		const fileBaseKey = _getFbk(0, totalBlocks, binTs);
 
-		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_UPLOAD), binTs, _own_uid, 0, index_enc, _getMfk_enc(fbk, binTs, 0), function(status) {
+		const index_enc = new Uint8Array(await window.crypto.subtle.encrypt(
+			{name: "AES-GCM", iv: new Uint8Array(12)},
+			await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
+			index_src));
+
+		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_UPLOAD, true), binTs, _own_uid, 0, index_enc, _getMfk_enc(fileBaseKey, binTs, 0), function(status) {
 			callback(status);
 		});
 	};
@@ -449,7 +472,7 @@ function PostVault(readyCallback) {
 
 		const binTs = _getBinTs();
 		const totalBlocks = lenTotal / _PV_BLOCKSIZE;
-		const fileBaseKey = _getFileBaseKey(slot, totalBlocks, binTs);
+		const fileBaseKey = _getFbk(slot, totalBlocks, binTs);
 
 		const contents = await file.slice(0, _PV_CHUNKSIZE - 2 - filename.length - sodium.crypto_aead_chacha20poly1305_ABYTES);
 		const contentsAb = await contents.arrayBuffer();
@@ -461,11 +484,13 @@ function PostVault(readyCallback) {
 		aead_src.set(new Uint8Array(contentsAb), 2 + filename.length);
 
 		progressCallback("Encrypting chunk 1 of " + totalChunks, 0, totalChunks * 2);
-		const aead_enc = sodium.crypto_aead_chacha20poly1305_encrypt(aead_src, null, null, new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey));
+		const aead_enc = new Uint8Array(await window.crypto.subtle.encrypt(
+			{name: "AES-GCM", iv: new Uint8Array(12)},
+			await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
+			aead_src));
 
 		progressCallback("Uploading chunk 1 of " + totalChunks, 0, totalChunks * 2);
-
-		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_UPLOAD), binTs, _own_uid, 0, aead_enc, _getMfk_enc(fileBaseKey, binTs, slot), function(status) {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_UPLOAD, true), binTs, _own_uid, 0, aead_enc, _getMfk_enc(fileBaseKey, binTs, slot), function(status) {
 			if (status !== 0) {
 				endCallback("Error: " + status);
 			} else {
@@ -487,22 +512,25 @@ function PostVault(readyCallback) {
 		progressCallback("Downloading first chunk", 0, 1);
 
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, _own_uid, 0, null, null, function(resp) {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD, false), binTs, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(slot, totalBlocks, resp.slice(0, 5));
+			const fileBaseKey = _getFbk(slot, totalBlocks, resp.slice(0, 5));
 			const totalChunks = (totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE
 			_files[slot].blocks = totalBlocks;
 
-			progressCallback("Decrypting (AES) first chunk", 0.5, 1);
-			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey), async function(dec) {
-				progressCallback("Decrypting (ChaCha20) first chunk", 0.75, 1);
-				dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey));
+			progressCallback("Decrypting (ChaCha20) first chunk", 0.5, 1);
+			let dec = _decryptMfk(resp.slice(9), _getMfk(fileBaseKey), new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES));
 
-				_files[slot].path = folderPath + sodium.to_string(dec.slice(2, 2 + dec[1]));
-				endCallback("Fixed");
-			});
+			progressCallback("Decrypting (AES) first chunk", 0.75, 1);
+			dec = new Uint8Array(await window.crypto.subtle.decrypt(
+				{name: "AES-GCM", iv: new Uint8Array(12)},
+				await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["decrypt"]),
+				dec));
+
+			_files[slot].path = folderPath + sodium.to_string(dec.slice(2, 2 + dec[1]));
+			endCallback("Fixed");
 		});
 	};
 
@@ -513,7 +541,7 @@ function PostVault(readyCallback) {
 		}
 
 		const binTs = _getBinTs();
-		_downloadFile(_own_uid, null, slot, await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD), binTs, progressCallback, async function(dec, fileName, totalBlocks, lenPadding) {
+		_downloadFile(_own_uid, null, slot, await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD, false), binTs, progressCallback, async function(dec, fileName, totalBlocks, lenPadding) {
 			const totalChunks = Math.ceil((totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE);
 
 			if (totalChunks > 1) {
@@ -545,43 +573,47 @@ function PostVault(readyCallback) {
 
 	this.downloadIndex = async function(callback) {if(typeof(callback)!=="function"){return;}
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_DOWNLOAD), binTs, _own_uid, 0, null, null, function(resp) {
+		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_DOWNLOAD, false), binTs, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {callback(resp); return;}
 
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFileBaseKey(0, totalBlocks, resp.slice(0, 5));
+			const fileBaseKey = _getFbk(0, totalBlocks, resp.slice(0, 5));
 
-			_decryptMfk(resp.slice(9), _getMfk(fileBaseKey), function(dec) {
-				try {
-					dec = sodium.crypto_aead_chacha20poly1305_decrypt(null, dec, null, new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getUfk(fileBaseKey));
-				} catch(e) {callback(-1); return;}
-				dec = dec.slice(2, dec.length - dec[0]);
+			// MFK
+			let dec = _decryptMfk(resp.slice(9), _getMfk(fileBaseKey), new Uint8Array(sodium.crypto_aead_chacha20poly1305_NPUBBYTES));
 
-				let n = 0;
-				for (let i = 0; n < dec.length; i++) {
-					const lenPath = dec[n];
-					if (lenPath === 0) {n++; continue;}
+			// UFK
+			dec = new Uint8Array(await window.crypto.subtle.decrypt(
+				{name: "AES-GCM", iv: new Uint8Array(12)},
+				await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["decrypt"]),
+				dec));
 
-					const fileBinTs = dec.slice(n + 1, n + 6);
-					const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
-					const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
+			dec = dec.slice(2, dec.length - dec[0]);
 
-					let fileName;
-					try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
-					catch(e) {fileName = "Error: " + e;}
+			let n = 0;
+			for (let i = 0; n < dec.length; i++) {
+				const lenPath = dec[n];
+				if (lenPath === 0) {n++; continue;}
 
-					_files[i] = new _pvFile(fileName, fileTime, fileBinTs, fileBlocks);
-					n += 14 + lenPath;
-				}
+				const fileBinTs = dec.slice(n + 1, n + 6);
+				const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
+				const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
 
-				callback(0);
-			});
+				let fileName;
+				try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
+				catch(e) {fileName = "Error: " + e;}
+
+				_files[i] = new _pvFile(fileName, fileTime, fileBinTs, fileBlocks);
+				n += 14 + lenPath;
+			}
+
+			callback(0);
 		});
 	};
 
 	this.deleteFile = async function(slot, callback) {if(typeof(slot)!=="number" || typeof(callback)!=="function"){return;}
 		const binTs = _getBinTs();
-		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DELETE), binTs, _own_uid, 0, null, null, function(status) {
+		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DELETE, false), binTs, _own_uid, 0, null, null, function(status) {
 			if (status === 0) {
 				_files[slot] = null;
 			}
@@ -591,31 +623,39 @@ function PostVault(readyCallback) {
 	};
 
 	this.setKeys = function(umk_b64, callback) {if(typeof(umk_b64)!=="string" || typeof(callback)!=="function"){return;}
-		if (umk_b64.length !== 64) {
+		if (umk_b64.length !== 60) {
 			callback(false);
 			return;
 		}
 
-		_own_umk = sodium.from_base64(umk_b64, sodium.base64_variants.ORIGINAL);
-		_own_uak = sodium.crypto_generichash(_AEM_SECURITY_UAK_LEN, new Uint8Array([_AEM_SECURITY_KEYID_UAK]), _own_umk);
-		_own_uid = new Uint16Array(sodium.crypto_generichash(16, "UserID", _own_uak).slice(0, 2).buffer)[0] & 4095;
+		const umk = sodium.from_base64(umk_b64, sodium.base64_variants.ORIGINAL);
+		_own_uak = _aem_kdf_umk(37, 0x01, umk);
+		_own_fmk = _aem_kdf_umk(37, 128 | 0x02, umk);
+
+		const counter = ((_own_uak[36] & 127) << 24) | ((_own_uak[36] & 128) << 16);
+		const nonce = new Uint8Array([_own_uak[32], _own_uak[33], _own_uak[34], _own_uak[35], 1, 0, 0, 0, 0, 0, 0, 0]);
+		_own_uid = new Uint16Array(sodium.crypto_stream_chacha20_ietf_xor_ic(new Uint8Array(2), nonce, counter, _own_uak.slice(0, 32)).buffer)[0] & 4095;
+
 		callback(true);
 	};
 
-	const b67_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.+#";
+	const b66_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.+";
 
 	this.createShareLink = async function(slot, expiration) {
 		if (typeof(slot) !== "number" || slot < 1 || slot > 65535 || typeof(expiration) !== "number" || expiration < 0 || expiration > 15) return;
 
 		const binTs = _getBinTs();
-		const inner_enc = await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD | _PV_FLAG_SHARED | (expiration << 1));
-		const fbk = _getFileBaseKey(slot, _files[slot].blocks, _files[slot].binTs);
+		const inner_enc = await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD | _PV_FLAG_SHARED | (expiration << 1), false);
+		const fbk = _getFbk(slot, _files[slot].blocks, _files[slot].binTs);
+		const uid8 = new Uint8Array(new Uint16Array([_own_uid]).buffer);
 
 		const binLink = new Uint8Array(fbk.length + binTs.length + inner_enc.length + 2);
-		binLink.set(fbk);
-		binLink.set(binTs, fbk.length);
-		binLink.set(inner_enc, fbk.length + binTs.length);
-		binLink.set(new Uint8Array(new Uint16Array([_own_uid]).buffer), fbk.length + binTs.length + inner_enc.length);
+		binLink.set(inner_enc);
+		binLink.set(binTs, inner_enc.length);
+		binLink[inner_enc.length + binTs.length] = uid8[0];
+		binLink[inner_enc.length + binTs.length + 1] = uid8[1] | ((fbk[fbk.length - 1] & 15) << 4);
+		binLink.set(fbk.slice(0, fbk.length - 1), inner_enc.length + binTs.length + 2);
+		binLink[inner_enc.length + binTs.length + fbk.length + 1] = (fbk[fbk.length - 1] & 16) >> 4;
 
 		let b = 0n;
 		for (let i = 0; i < binLink.length; i++) {
@@ -623,34 +663,39 @@ function PostVault(readyCallback) {
 		}
 
 		let url = document.documentURI + "#";
-		for (let i = 0; i < 76; i++) {
-			let y = b % 67n;
-			url += b67_chars[Number(y)];
+		for (let i = 0; i < 81; i++) {
+			let y = b % 66n;
+			url += b66_chars[Number(y)];
 			b -= y;
-			b /= 67n;
+			b /= 66n;
 		}
 
 		return url;
 	};
 
-	this.sharedLink_get = function(url, infoCallback, progressCallback, endCallback) {if(typeof(url)!=="string" || url.length!=76){return;}
+	this.sharedLink_get = function(url, infoCallback, progressCallback, endCallback) {if(typeof(url)!=="string" || url.length!=81){return;}
 		let b = 0n;
-		for (let i = 0; i < 76; i++) {
-			b += BigInt(b67_chars.indexOf(url[i])) * (67n ** BigInt(i));
+		for (let i = 0; i < 81; i++) {
+			b += BigInt(b66_chars.indexOf(url[i])) * (66n ** BigInt(i));
 		}
 
-		let bin = new Uint8Array(58);
-		for (let i = 0; i < 58; i++) {
+		let bin = new Uint8Array(62);
+		for (let i = 0; i < 62; i++) {
 			let y = b % 256n;
 			bin[i] = Number(y);
 			b -= y;
 			b /= 256n;
 		}
 
-		const shr_fbk = bin.slice(0, 32);
-		const shr_binTs = bin.slice(32, 37);
-		const shr_inner_enc = bin.slice(37, 40 + sodium.crypto_onetimeauth_BYTES);
-		const shr_uid = new Uint16Array(bin.slice(40 + sodium.crypto_onetimeauth_BYTES).buffer)[0];
+		const shr_inner_enc = bin.slice(0, 3 + sodium.crypto_onetimeauth_BYTES);
+		const shr_binTs = bin.slice(3 + sodium.crypto_onetimeauth_BYTES, 8 + sodium.crypto_onetimeauth_BYTES);
+		const shr_uid8 = bin.slice(8 + sodium.crypto_onetimeauth_BYTES, 10 + sodium.crypto_onetimeauth_BYTES);
+		shr_uid8[1] &= 15;
+		const shr_uid = new Uint16Array(shr_uid8.buffer)[0];
+
+		const shr_fbk = new Uint8Array(36);
+		shr_fbk.set(bin.slice(10 + sodium.crypto_onetimeauth_BYTES, 45 + sodium.crypto_onetimeauth_BYTES));
+		shr_fbk[35] = ((bin[9 + sodium.crypto_onetimeauth_BYTES]) >> 4) | ((bin[61] & 1) << 4);
 
 		const shr_username = String.fromCharCode(97 + (shr_uid & 15)) + String.fromCharCode(97 + ((shr_uid >> 4) & 15)) + String.fromCharCode(97 + ((shr_uid >> 8) & 15));
 		const shr_time = Number((BigInt(Date.now()) & ~((1n << 40n) - 1n)) | BigInt(new Uint32Array(shr_binTs.slice(0, 4).buffer)[0]) + BigInt(shr_binTs[4]) * BigInt(Math.pow(2, 32)));
