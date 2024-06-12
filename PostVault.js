@@ -307,7 +307,7 @@ function PostVault(readyCallback) {
 		chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
 
 		const aead_enc = new Uint8Array(await window.crypto.subtle.encrypt(
-			{name: "AES-GCM", iv: new Uint8Array(12)},
+			{name: "AES-GCM", iv: chunkNonce},
 			await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
 			aead_src));
 
