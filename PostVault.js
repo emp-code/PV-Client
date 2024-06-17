@@ -399,7 +399,7 @@ function PostVault(readyCallback) {
 		let list = [];
 
 		_files.forEach(function(f, i) {
-			if (i === 0) return;
+			if (i === 0 || !f) return;
 
 			if (f.path.startsWith(basePath)) {
 				const slash = f.path.substr(basePath.length).indexOf("/");
@@ -424,7 +424,7 @@ function PostVault(readyCallback) {
 	this.getTotalFiles = function() {return _files.length;};
 	this.getTotalSize = function() {
 		let b = 0;
-		_files.forEach(function(f) {b += f.blocks;});
+		_files.forEach(function(f) {if (f) {b += f.blocks;}});
 		return b * _PV_BLOCKSIZE;
 	};
 
