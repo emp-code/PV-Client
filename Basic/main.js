@@ -239,6 +239,17 @@ sodium.ready.then(function() {
 		};
 	};
 
+	document.getElementById("btn_updir").onclick = async function() {
+		const dirHandle = await window.showDirectoryPicker({mode: "read", startIn: "documents"});
+
+		const files = [];
+		for await (const val of dirHandle.values()) {
+			if (val.kind === "file") files.push(await val.getFile());
+		}
+
+		uploadFile(files, currentPath + "/" + dirHandle.name, 0);
+	}
+
 	document.querySelector("#div_entry button").onclick = function() {
 		const txtKey = document.getElementsByTagName("input")[0];
 		if (!txtKey.reportValidity()) return;
