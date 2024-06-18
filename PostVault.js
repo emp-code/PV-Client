@@ -413,6 +413,7 @@ function PostVault(readyCallback) {
 		});
 
 		if (!wantFiles && wantFolders) list.sort();
+		if (wantFiles && !wantFolders) list.sort((a, b) => (_files[a].path > _files[b].path) ? 1 : -1);
 
 		return list;
 	};
