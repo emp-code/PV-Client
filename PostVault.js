@@ -10,7 +10,7 @@ function PostVault(readyCallback) {
 	const _PV_CMD_DOWNLOAD = 0;
 	const _PV_CMD_UPLOAD =  64;
 	const _PV_CMD_DELETE = 128;
-//	const _PV_CMD_       = 192;
+	const _PV_CMD_VERIFY = 192;
 
 	const _PV_APIURL = document.head.querySelector("meta[name='postvault.url']").content;
 	const _PV_EXPIRATION = ["5 minutes", "15 minutes", "1 hour", "4 hours", "12 hours", "24 hours", "3 days", "7 days", "2 weeks", "1 month", "3 months", "6 months", "12 months", "2 years", "5 years", "∞"];
@@ -503,6 +503,89 @@ function PostVault(readyCallback) {
 					_uploadChunks(file, slot, binTs, totalBlocks, lenPadding, contents.size, totalChunks, 1, progressCallback, endCallback);
 				}
 			}
+		});
+	};
+
+	this.verifyFile = async function(slot, file, endCallback) {if(typeof(slot)!=="number" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
+		const bts = _getBinTs();
+		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_VERIFY, false), bts, _own_uid, 0, null, null, async function(resp) {
+			if (typeof(resp) === "number") {
+				endCallback("Error: " + resp);
+				return;
+			}
+
+			const filename = sodium.from_string(file.name);
+			let lenTotal = 2 + filename.length + file.size;
+			let lenPadding = (lenTotal % 16 === 0) ? 0 : 16 - (lenTotal & 15);
+			lenTotal += lenPadding;
+
+			let totalChunks = Math.ceil(lenTotal / _PV_CHUNKSIZE);
+			lenTotal += totalChunks * sodium.crypto_aead_chacha20poly1305_ABYTES;
+
+			if (totalChunks < Math.ceil(lenTotal / _PV_CHUNKSIZE) || lenTotal % _PV_CHUNKSIZE == 0) {
+				lenTotal += sodium.crypto_aead_chacha20poly1305_ABYTES;
+				totalChunks++;
+			}
+
+			if (totalChunks > 4095) {endCallback("Error: File too large."); return;}
+			const totalBlocks = lenTotal / 16;
+
+			const vfyKeyNonce = new Uint8Array(8);
+			vfyKeyNonce.set(bts);
+			vfyKeyNonce[7] = 3;
+			const verifyKey = _aem_kdf_uak(32, vfyKeyNonce);
+
+			const fileBaseKey = _getFbk(slot, totalBlocks, resp.slice(0, 5));
+
+			let offset = 0;
+			let hashData = new Uint8Array(totalChunks * 16);
+			for (let chunk = 0; chunk < totalChunks; chunk++) {
+				let chunk_src;
+
+				if (chunk === 0) {
+					const chunk_src_len = ((totalChunks > 1) ? _PV_CHUNKSIZE : lenTotal) - 16;
+					chunk_src = new Uint8Array(chunk_src_len);
+					chunk_src.set(new Uint8Array([lenPadding, filename.length]));
+					chunk_src.set(filename, 2);
+
+					const contents = await file.slice(0, _PV_CHUNKSIZE - 18 - filename.length);
+					const contentsAb = await contents.arrayBuffer();
+					chunk_src.set(new Uint8Array(contentsAb), 2 + filename.length);
+					offset += _PV_CHUNKSIZE - 18 - filename.length;
+				} else if (chunk + 1 === totalChunks) {
+					const contents = await file.slice(offset);
+					const contentsAb = await contents.arrayBuffer();
+
+					chunk_src = new Uint8Array(contents.size + lenPadding);
+					chunk_src.set(new Uint8Array(contentsAb));
+				} else {
+					const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - 16);
+					const contentsAb = await contents.arrayBuffer();
+					chunk_src = new Uint8Array(contentsAb);
+					offset += _PV_CHUNKSIZE - 16;
+				}
+
+				const chunkNonce = new Uint8Array(12);
+				chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
+
+				let chunk_enc = new Uint8Array(await window.crypto.subtle.encrypt(
+					{name: "AES-GCM", iv: chunkNonce},
+					await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
+					chunk_src));
+
+				chunk_enc = sodium.crypto_stream_chacha20_xor(chunk_enc, chunkNonce.slice(0, sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getMfk(fileBaseKey));
+
+				hashData.set(sodium.crypto_generichash(16, chunk_enc, verifyKey), chunk * 16);
+			}
+
+			for (let i = 0; i < hashData.length; i++) {
+				if (resp[5 + i] !== hashData[i]) {
+					endCallback("Chunk " + Math.floor(i / 16) + " does not match.");
+					return;
+				}
+			}
+
+			endCallback("Verified OK.");
 		});
 	};
 
