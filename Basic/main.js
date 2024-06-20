@@ -173,6 +173,23 @@ sodium.ready.then(function() {
 			}
 			elLi.append(fxBtn);
 
+			const vfBtn = document.createElement("button");
+			vfBtn.textContent = "Verify";
+			vfBtn.onclick = function() {
+				const fileSelector = document.createElement("input");
+				fileSelector.type = "file";
+				fileSelector.click();
+
+				fileSelector.onchange = function() {
+					document.getElementById("progress_text").textContent = "Verifying...";
+
+					vault.verifyFile(f, fileSelector.files[0],
+						function(statusText) {document.getElementById("progress_text").textContent = statusText;}
+					);
+				};
+			}
+			elLi.append(vfBtn);
+
 			const shBtn = document.createElement("button");
 			shBtn.textContent = "Share";
 
