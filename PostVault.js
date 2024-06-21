@@ -506,8 +506,10 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.verifyFile = async function(slot, file, endCallback) {if(typeof(slot)!=="number" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
+	this.verifyFile = async function(slot, file, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
 		const bts = _getBinTs();
+		progressCallback("Requesting hashes", 0, 1);
+
 		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_VERIFY, false), bts, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {
 				endCallback("Error: " + resp);
@@ -540,6 +542,8 @@ function PostVault(readyCallback) {
 			let offset = 0;
 			let hashData = new Uint8Array(totalChunks * 16);
 			for (let chunk = 0; chunk < totalChunks; chunk++) {
+				progressCallback("Hashing chunk " + chunk + " of " + totalChunks, chunk, totalChunks);
+
 				let chunk_src;
 
 				if (chunk === 0) {

@@ -184,7 +184,16 @@ sodium.ready.then(function() {
 					document.getElementById("progress_text").textContent = "Verifying...";
 
 					vault.verifyFile(f, fileSelector.files[0],
-						function(statusText) {document.getElementById("progress_text").textContent = statusText;}
+						function(statusText, currentProgress, maxProgress) {
+							document.getElementById("progress_text").textContent = statusText;
+							document.getElementById("progress_meter").value = currentProgress;
+							document.getElementById("progress_meter").max = maxProgress;
+						},
+						function(statusText) {
+							document.getElementById("progress_text").textContent = statusText;
+							document.getElementById("progress_meter").value = 1;
+							document.getElementById("progress_meter").max = 1;
+						}
 					);
 				};
 			}
