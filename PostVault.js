@@ -665,6 +665,9 @@ function PostVault(readyCallback) {
 		_fetchEncrypted(await _fe_create_inner(binTs, 0, _PV_CMD_DOWNLOAD, false), binTs, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {callback(resp); return;}
 
+			const slotData = resp.slice(resp.length - 8192);
+			resp = resp.slice(0, resp.length - 8192);
+
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
 			const fileBaseKey = _getFbk(0, totalBlocks, resp.slice(0, 5));
 
@@ -680,20 +683,27 @@ function PostVault(readyCallback) {
 			dec = dec.slice(2, dec.length - dec[0]);
 
 			let n = 0;
-			for (let i = 0; n < dec.length; i++) {
-				const lenPath = dec[n];
-				if (lenPath === 0) {n++; continue;}
+			for (let i = 0; i < 65535; i++) {
+				if (n < dec.length) {
+					const lenPath = dec[n];
+					if (lenPath === 0) {n++; continue;}
 
-				const fileBinTs = dec.slice(n + 1, n + 6);
-				const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
-				const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
+					const fileBinTs = dec.slice(n + 1, n + 6);
+					const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
+					const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
 
-				let fileName;
-				try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
-				catch(e) {fileName = "Error: " + e;}
+					let fileName;
+					try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
+					catch(e) {fileName = "Error: " + e;}
 
-				_files[i] = new _pvFile(fileName, fileTime, fileBinTs, fileBlocks);
-				n += 14 + lenPath;
+					if (slotData[(i - (i % 8)) / 8] & (1 << (i % 8)) == 0) console.log("DEL");
+
+					const x = slotData[(i - (i % 8)) / 8] & (1 << (i % 8));
+					_files[i] = new _pvFile(fileName, fileTime, fileBinTs, x? fileBlocks : 0);
+					n += 14 + lenPath;
+				} else if (slotData[(i - (i % 8)) / 8] & (1 << (i % 8)) != 0) {
+					_files[i] = new _pvFile("unknown", 0, 0, 0);
+				}
 			}
 
 			callback(0);
@@ -701,6 +711,11 @@ function PostVault(readyCallback) {
 	};
 
 	this.deleteFile = async function(slot, callback) {if(typeof(slot)!=="number" || typeof(callback)!=="function"){return;}
+		if (_files[slot].blocks === 0) {
+			_files[slot] = null;
+			return;
+		}
+
 		const binTs = _getBinTs();
 		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DELETE, false), binTs, _own_uid, 0, null, null, function(status) {
 			if (status === 0) {
