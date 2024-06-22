@@ -684,26 +684,28 @@ function PostVault(readyCallback) {
 
 			let n = 0;
 			for (let i = 0; i < 65535; i++) {
-				if (n < dec.length) {
-					const lenPath = dec[n];
-					if (lenPath === 0) {n++; continue;}
+				const lenPath = dec[n];
+				if (lenPath === 0) {
+					const x = slotData[Math.floor((i - (i % 8)) / 8)] & (1 << (i % 8));
+					if (x && i) {
+						_files[i] = new _pvFile("(Unknown)", 0, 0, 0);
+					}
 
-					const fileBinTs = dec.slice(n + 1, n + 6);
-					const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
-					const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
-
-					let fileName;
-					try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
-					catch(e) {fileName = "Error: " + e;}
-
-					if (slotData[(i - (i % 8)) / 8] & (1 << (i % 8)) == 0) console.log("DEL");
-
-					const x = slotData[(i - (i % 8)) / 8] & (1 << (i % 8));
-					_files[i] = new _pvFile(fileName, fileTime, fileBinTs, x? fileBlocks : 0);
-					n += 14 + lenPath;
-				} else if (slotData[(i - (i % 8)) / 8] & (1 << (i % 8)) != 0) {
-					_files[i] = new _pvFile("unknown", 0, 0, 0);
+					n++;
+					continue;
 				}
+
+				const fileBinTs = dec.slice(n + 1, n + 6);
+				const fileTime   = new Uint32Array(dec.slice(n + 6, n + 10).buffer)[0];
+				const fileBlocks = new Uint32Array(dec.slice(n + 10, n + 14).buffer)[0];
+
+				let fileName;
+				try {fileName = sodium.to_string(dec.slice(n + 14, n + 14 + lenPath));}
+				catch(e) {fileName = "Error: " + e;}
+
+				const x = slotData[(i - (i % 8)) / 8] & (1 << (i % 8));
+				_files[i] = new _pvFile(fileName, fileTime, fileBinTs, x? fileBlocks : 0);
+				n += 14 + lenPath;
 			}
 
 			callback(0);
