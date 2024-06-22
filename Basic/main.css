@@ -89,3 +89,7 @@ time {
 [hidden] {
 	display: none !important;
 }
+
+.strike {
+	text-decoration-line: line-through;
+}

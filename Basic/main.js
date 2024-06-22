@@ -110,7 +110,13 @@ sodium.ready.then(function() {
 
 			const elSpan = document.createElement("span");
 
-			elSpan.textContent = vault.getFilePath(f).substr(basePath? basePath.length + 1 : 0) + " (" + getDisplaySize(vault.getFileSize(f)) + ") ";
+			if (vault.getFileSize(f) == 0) {
+				elSpan.textContent = vault.getFilePath(f).substr(basePath? basePath.length + 1 : 0);
+				elSpan.className = "strike";
+			} else {
+				elSpan.textContent = vault.getFilePath(f).substr(basePath? basePath.length + 1 : 0) + " (" + getDisplaySize(vault.getFileSize(f)) + ") ";
+			}
+
 			elSpan.onclick = function() {
 				vault.downloadFile(f,
 					function(statusText, currentProgress, maxProgress) {
