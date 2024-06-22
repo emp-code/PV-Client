@@ -603,8 +603,9 @@ function PostVault(readyCallback) {
 		_fetchEncrypted(await _fe_create_inner(binTs, slot, _PV_CMD_DOWNLOAD, false), binTs, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {endCallback("Error: " + resp); return;}
 
+			const fileBinTs = resp.slice(0, 5);
 			const totalBlocks = new Uint32Array(resp.slice(5, 9).buffer)[0];
-			const fileBaseKey = _getFbk(slot, totalBlocks, resp.slice(0, 5));
+			const fileBaseKey = _getFbk(slot, totalBlocks, fileBinTs);
 			const totalChunks = (totalBlocks * _PV_BLOCKSIZE) / _PV_CHUNKSIZE
 			_files[slot].blocks = totalBlocks;
 
@@ -617,6 +618,8 @@ function PostVault(readyCallback) {
 				await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["decrypt"]),
 				dec));
 
+			_files[slot].binTs = fileBinTs;
+			_files[slot].blocks = totalBlocks;
 			_files[slot].path = folderPath + sodium.to_string(dec.slice(2, 2 + dec[1]));
 			endCallback("Fixed");
 		});
