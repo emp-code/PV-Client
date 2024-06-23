@@ -593,6 +593,8 @@ function PostVault(readyCallback) {
 				return;
 			}
 
+			if (_files[slot].lastMod === 0) _files[slot].lastMod = Math.round(file.lastModified / 1000);
+
 			const filename = sodium.from_string(file.name);
 			let lenTotal = 2 + filename.length + file.size;
 			let lenPadding = (lenTotal % 16 === 0) ? 0 : 16 - (lenTotal & 15);
