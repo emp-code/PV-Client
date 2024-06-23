@@ -506,12 +506,13 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	const _verifyChunk = async function(repairs, verifyKey, serverHash, chunk, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback) {
+	const _verifyChunk = async function(repairs, verifyKey, serverHash, chunk, totalChunks, file, offset, slot, lenPadding, lenTotal, fileBts, progressCallback, endCallback) {
 		if (chunk == totalChunks) {
 			endCallback(repairs);
 			return;
 		}
 
+		const fileBlocks = lenTotal / 16;
 		const fileBaseKey = _getFbk(slot, fileBlocks, fileBts);
 		progressCallback("Checking chunk " + (chunk + 1) + " of " + totalChunks, chunk + 1, totalChunks);
 
@@ -562,7 +563,7 @@ function PostVault(readyCallback) {
 			}
 		} else hashMatch = false;
 
-		if (hashMatch) return _verifyChunk(repairs, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback);
+		if (hashMatch) return _verifyChunk(repairs, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, lenTotal, fileBts, progressCallback, endCallback);
 
 		// Chunk corrupt - reupload
 		progressCallback("Reuploading chunk " + (chunk + 1) + " of " + totalChunks, chunk + 1, totalChunks);
@@ -574,7 +575,7 @@ function PostVault(readyCallback) {
 				return;
 			}
 
-			_verifyChunk(repairs + 1, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback);
+			_verifyChunk(repairs + 1, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, lenTotal, fileBts, progressCallback, endCallback);
 		});
 	}
 
@@ -606,14 +607,13 @@ function PostVault(readyCallback) {
 			}
 
 			if (totalChunks > 4095) {endCallback("Error: File too large."); return;}
-			const totalBlocks = lenTotal / 16;
 
 			const vfyKeyNonce = new Uint8Array(8);
 			vfyKeyNonce.set(bts);
 			vfyKeyNonce[7] = 3;
 			const verifyKey = _aem_kdf_uak(32, vfyKeyNonce);
 
-			_verifyChunk(0, verifyKey, resp.slice(5), 0, totalChunks, file, 0, slot, lenPadding, totalBlocks, resp.slice(0, 5), progressCallback, function(repairs) {
+			_verifyChunk(0, verifyKey, resp.slice(5), 0, totalChunks, file, 0, slot, lenPadding, lenTotal, resp.slice(0, 5), progressCallback, function(repairs) {
 				if (repairs === 0)
 					endCallback("Verified OK.");
 				else if (repairs > 0)
