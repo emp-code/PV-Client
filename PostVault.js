@@ -506,10 +506,86 @@ function PostVault(readyCallback) {
 		});
 	};
 
-	this.verifyFile = async function(slot, file, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
-		const bts = _getBinTs();
-		progressCallback("Requesting hashes", 0, 1);
+	const _verifyChunk = async function(repairs, verifyKey, serverHash, chunk, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback) {
+		if (chunk == totalChunks) {
+			endCallback(repairs);
+			return;
+		}
 
+		const fileBaseKey = _getFbk(slot, fileBlocks, fileBts);
+		progressCallback("Checking chunk " + (chunk + 1) + " of " + totalChunks, chunk + 1, totalChunks);
+
+		let chunk_src;
+		if (chunk === 0) { // First chunk
+			const filename = sodium.from_string(file.name);
+
+			const chunk_src_len = ((totalChunks > 1) ? _PV_CHUNKSIZE : lenTotal) - 16;
+			chunk_src = new Uint8Array(chunk_src_len);
+			chunk_src.set(new Uint8Array([lenPadding, filename.length]));
+			chunk_src.set(filename, 2);
+
+			const contents = await file.slice(0, _PV_CHUNKSIZE - 18 - filename.length);
+			const contentsAb = await contents.arrayBuffer();
+			chunk_src.set(new Uint8Array(contentsAb), 2 + filename.length);
+			offset += _PV_CHUNKSIZE - 18 - filename.length;
+		} else if (chunk + 1 === totalChunks) { // Last chunk
+			const contents = await file.slice(offset);
+			const contentsAb = await contents.arrayBuffer();
+
+			chunk_src = new Uint8Array(contents.size + lenPadding);
+			chunk_src.set(new Uint8Array(contentsAb));
+		} else { // Middle chunk
+			const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - 16);
+			const contentsAb = await contents.arrayBuffer();
+			chunk_src = new Uint8Array(contentsAb);
+			offset += _PV_CHUNKSIZE - 16;
+		}
+
+		const chunkNonce = new Uint8Array(12);
+		chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
+
+		let chunk_enc = new Uint8Array(await window.crypto.subtle.encrypt(
+			{name: "AES-GCM", iv: chunkNonce},
+			await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
+			chunk_src));
+
+		const chunk_server = sodium.crypto_stream_chacha20_xor(chunk_enc, chunkNonce.slice(0, sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getMfk(fileBaseKey));
+		const clientHash = sodium.crypto_generichash(16, chunk_server, verifyKey);
+
+		let hashMatch = true;
+		if (serverHash.length >= 16) {
+			for (let i = 0; i < 16; i++) {
+				if (clientHash[i] !== serverHash[i]) {
+					hashMatch = false;
+					break;
+				}
+			}
+		} else hashMatch = false;
+
+		if (hashMatch) return _verifyChunk(repairs, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback);
+
+		// Chunk corrupt - reupload
+		progressCallback("Reuploading chunk " + (chunk + 1) + " of " + totalChunks, chunk + 1, totalChunks);
+
+		const bts = _getBinTs();
+		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_UPLOAD | _PV_FLAG_KEEPOLD, true), bts, _own_uid, chunk, chunk_enc, _getMfk_enc(fileBaseKey, bts, slot), function(status) {
+			if (status !== 0) {
+				endCallback(status);
+				return;
+			}
+
+			_verifyChunk(repairs + 1, verifyKey, serverHash.slice(16), chunk + 1, totalChunks, file, offset, slot, lenPadding, fileBlocks, fileBts, progressCallback, endCallback);
+		});
+	}
+
+	this.verifyFile = async function(slot, file, progressCallback, endCallback) {if(typeof(slot)!=="number" || typeof(file)!=="object" || typeof(endCallback)!=="function"){return;}
+		if (file.name !== _files[slot].path.slice(_files[slot].path.lastIndexOf("/") + 1)) {
+			endCallback("Filename mismatch", 0, 0);
+			return;
+		}
+
+		progressCallback("Requesting hashes", 0, 1);
+		const bts = _getBinTs();
 		_fetchEncrypted(await _fe_create_inner(bts, slot, _PV_CMD_VERIFY, false), bts, _own_uid, 0, null, null, async function(resp) {
 			if (typeof(resp) === "number") {
 				endCallback("Error: " + resp);
@@ -537,59 +613,14 @@ function PostVault(readyCallback) {
 			vfyKeyNonce[7] = 3;
 			const verifyKey = _aem_kdf_uak(32, vfyKeyNonce);
 
-			const fileBaseKey = _getFbk(slot, totalBlocks, resp.slice(0, 5));
-
-			let offset = 0;
-			let hashData = new Uint8Array(totalChunks * 16);
-			for (let chunk = 0; chunk < totalChunks; chunk++) {
-				progressCallback("Hashing chunk " + chunk + " of " + totalChunks, chunk, totalChunks);
-
-				let chunk_src;
-
-				if (chunk === 0) {
-					const chunk_src_len = ((totalChunks > 1) ? _PV_CHUNKSIZE : lenTotal) - 16;
-					chunk_src = new Uint8Array(chunk_src_len);
-					chunk_src.set(new Uint8Array([lenPadding, filename.length]));
-					chunk_src.set(filename, 2);
-
-					const contents = await file.slice(0, _PV_CHUNKSIZE - 18 - filename.length);
-					const contentsAb = await contents.arrayBuffer();
-					chunk_src.set(new Uint8Array(contentsAb), 2 + filename.length);
-					offset += _PV_CHUNKSIZE - 18 - filename.length;
-				} else if (chunk + 1 === totalChunks) {
-					const contents = await file.slice(offset);
-					const contentsAb = await contents.arrayBuffer();
-
-					chunk_src = new Uint8Array(contents.size + lenPadding);
-					chunk_src.set(new Uint8Array(contentsAb));
-				} else {
-					const contents = await file.slice(offset, offset + _PV_CHUNKSIZE - 16);
-					const contentsAb = await contents.arrayBuffer();
-					chunk_src = new Uint8Array(contentsAb);
-					offset += _PV_CHUNKSIZE - 16;
-				}
-
-				const chunkNonce = new Uint8Array(12);
-				chunkNonce.set(new Uint8Array(new Uint16Array([chunk]).buffer));
-
-				let chunk_enc = new Uint8Array(await window.crypto.subtle.encrypt(
-					{name: "AES-GCM", iv: chunkNonce},
-					await window.crypto.subtle.importKey("raw", _getUfk(fileBaseKey), {"name": "AES-GCM"}, false, ["encrypt"]),
-					chunk_src));
-
-				chunk_enc = sodium.crypto_stream_chacha20_xor(chunk_enc, chunkNonce.slice(0, sodium.crypto_aead_chacha20poly1305_NPUBBYTES), _getMfk(fileBaseKey));
-
-				hashData.set(sodium.crypto_generichash(16, chunk_enc, verifyKey), chunk * 16);
-			}
-
-			for (let i = 0; i < hashData.length; i++) {
-				if (resp[5 + i] !== hashData[i]) {
-					endCallback("Chunk " + Math.floor(i / 16) + " does not match.");
-					return;
-				}
-			}
-
-			endCallback("Verified OK.");
+			_verifyChunk(0, verifyKey, resp.slice(5), 0, totalChunks, file, 0, slot, lenPadding, totalBlocks, resp.slice(0, 5), progressCallback, function(repairs) {
+				if (repairs === 0)
+					endCallback("Verified OK.");
+				else if (repairs > 0)
+					endCallback("Repaired " + repairs + " chunks.");
+				else
+					endCallback("Error: " + repairs);
+			});
 		});
 	};
 
