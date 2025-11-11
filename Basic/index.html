@@ -23,7 +23,7 @@
 			</main>
 
 			<footer>
-				<div>Shared by <span id="share_uid"></span> on <time id="share_date"></time></div>
+				<div><time id="share_date"></time></div>
 				<div><button id="share_info">Info</button></div>
 			</footer>
 		</div>
@@ -51,11 +51,11 @@
 			<p>Total: <span id="totalfiles"></span> files, using <span id="totalsize"></span></p>
 
 			<p>
-				<input type="range" min="0" max="15" id="share_expiration"> <span id="txt_expiration"></span>
+				<input type="range" min="1" max="7" id="share_expiration"> <span id="txt_expiration"></span>
 			</p>
 		</div>
 
-		<script src="https://cdn.jsdelivr.net/gh/jedisct1/libsodium.js@0.7.13/dist/browsers-sumo/sodium.js" integrity="sha384-xE+e4s598d4A0BKvbnkYaqRYutiZTg3KzqnWK51WA6h0yoCZ3uuV52KsntFIWScg" crossorigin="anonymous"></script>
+		<script src="https://cdn.jsdelivr.net/gh/emp-code/libsodium.js/dist/browsers-sumo/sodium.js" integrity="sha384-rcw2LBMSpnX4HFY+md42L1aJ+phy3xFtydixbQPd9mt9H4F85shsmqvaGg7maGzf" crossorigin="anonymous"></script>
 		<script src="PostVault.js"></script>
 		<script src="main.js"></script>
 	</body>

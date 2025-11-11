@@ -10,8 +10,7 @@ sodium.ready.then(function() {
 	if (document.location.hash) {
 		document.getElementById("div_shared").hidden = false;
 
-		vault.sharedLink_get(document.location.hash.substr(1), function(shr_uid, shr_ts) {
-			document.getElementById("share_uid").textContent = shr_uid;
+		vault.sharedLink_get(document.location.hash.substr(1), function(shr_ts, shr_ex) {
 			document.getElementById("share_date").dateTime = new Date(shr_ts).toISOString();
 			document.getElementById("share_date").textContent = new Date(shr_ts).toISOString().substr(0, 10);
 		}, function(status) {
@@ -61,15 +60,15 @@ sodium.ready.then(function() {
 
 	let currentPath = "";
 
-	function getDisplaySize(bytes) {
-		if (bytes > 1073741824) {
-			return (bytes / 1073741824).toFixed(1) + " GiB";
-		} else if (bytes > 1048576) {
-			return Math.round(bytes / 1048576) + " MiB";
-		} else if (bytes > 1024) {
-			return Math.round(bytes / 1024) + " KiB";
+	function getDisplaySize(kib) {
+		if (kib > 1073741824) {
+			return (kib / 1073741824).toFixed(1) + " TiB";
+		} else if (kib > 1048576) {
+			return Math.round(kib / 1048576) + " GiB";
+		} else if (kib > 1024) {
+			return Math.round(kib / 1024) + " MiB";
 		} else {
-			return bytes + " B";
+			return kib + " KiB";
 		}
 	}
 
@@ -104,8 +103,11 @@ sodium.ready.then(function() {
 		files.forEach(function(f) {
 			const elLi = document.createElement("li");
 
+			const tzOs = new Date().getTimezoneOffset();
+			const tm = new Date(vault.getFileTime(f) + (tzOs * -60000));
+
 			const elTime = document.createElement("time");
-			elTime.textContent = new Date(vault.getFileTime(f) * 1000).toISOString().slice(0, 19).replace("T", " ") + " ";
+			elTime.textContent = new Date(tm).toISOString().slice(0, 19).replace("T", " ") + " ";
 			elLi.append(elTime);
 
 			const elSpan = document.createElement("span");
@@ -208,8 +210,8 @@ sodium.ready.then(function() {
 			const shBtn = document.createElement("button");
 			shBtn.textContent = "Share";
 
-			shBtn.onclick = async function() {
-				await navigator.clipboard.writeText(await vault.createShareLink(f, Number(document.getElementById("share_expiration").value)));
+			shBtn.onclick = function() {
+				navigator.clipboard.writeText(vault.createShareLink(f, Number(document.getElementById("share_expiration").value)));
 				document.getElementById("progress_text").textContent = "Link copied to clipboard"
 			};
 			elLi.append(shBtn);
@@ -298,7 +300,7 @@ sodium.ready.then(function() {
 
 			vault.downloadIndex(function(status) {
 				if (status !== 0) {
-					document.getElementById("progress_text").textContent = "Error getting index";
+					document.getElementById("progress_text").textContent = status;
 				}
 
 				document.getElementById("div_entry").hidden = true;
