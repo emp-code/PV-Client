@@ -111,7 +111,7 @@ function PostVault(readyCallback) {
 
 	const _pvApi_fetch = async function(urlBase, chunk, postData, callback) {
 		let r;
-//		try {
+		try {
 			r = await fetch(
 					_PV_APIURL + "/" +
 					sodium.to_base64(urlBase, sodium.base64_variants.URLSAFE) +
@@ -129,7 +129,7 @@ function PostVault(readyCallback) {
 				referrerPolicy: "no-referrer",
 				body: (typeof(postData) === "object") ? postData : null
 			});
-//		} catch(e) {callback(0x02);}
+		} catch(e) {callback(0x02);}
 		callback(r? ((r.status === 200) ? new Uint8Array(await r.arrayBuffer()) : r.status) : 0x02);
 	};
 
